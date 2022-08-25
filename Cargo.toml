@@ -1,0 +1,39 @@
+[package]
+name = "cache"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rocket = "0.5.0-rc.2"
+utoipa = { version = "1", features = ["rocket_extras"] }
+utoipa-swagger-ui = { version = "1", features = ["rocket"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+env_logger = "0.9.0"
+log = "0.4"
+rand = "0.8"
+
+
+tonic = "0.7"
+prost = "0.10"
+cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
+anyhow = "1.0"
+hex = "0.4"
+time = { version = "0.3", features = ["formatting", "local-offset"] }
+crossbeam = "0.8"
+lazy_static = "1.4"
+
+# crypto SM
+libsm = "0.5.0"
+efficient-sm2 = "0.1"
+# crypto ETH
+aes = "0.8"
+ctr = "0.9"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+secp256k1 = { version = "0.24", features = ["rand-std", "recovery"] }
+tentacle-multiaddr = "0.3"
+
+[build-dependencies]
+tonic-build = "0.7"
