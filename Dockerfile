@@ -15,4 +15,6 @@ RUN cargo build --release
 FROM debian:bullseye-slim
 COPY --from=buildstage /build/target/release/cache /usr/bin/
 COPY --from=buildstage /bin/grpc_health_probe /usr/bin/
+ENV ROCKET_ADDRESS=0.0.0.0
+EXPOSE 8000
 CMD ["cache"]
