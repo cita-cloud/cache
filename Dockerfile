@@ -13,6 +13,6 @@ RUN /bin/sh -c set -eux;\
 COPY . /build/
 RUN cargo build --release
 FROM debian:bullseye-slim
-COPY --from=buildstage /build/target/release/controller /usr/bin/
+COPY --from=buildstage /build/target/release/cache /usr/bin/
 COPY --from=buildstage /bin/grpc_health_probe /usr/bin/
-CMD ["controller"]
+CMD ["cache"]
