@@ -35,5 +35,7 @@ tiny-keccak = { version = "2.0", features = ["keccak"] }
 secp256k1 = { version = "0.24", features = ["rand-std", "recovery"] }
 tentacle-multiaddr = "0.3"
 
+redis = "0.21.5"
+
 [build-dependencies]
 tonic-build = "0.7"

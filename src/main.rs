@@ -17,8 +17,12 @@ mod constant;
 mod crypto;
 mod display;
 mod health_check;
+mod redis;
+mod util;
 
 use crate::display::init_local_utc_offset;
+use crate::redis as my_redis;
+use ::redis::ConnectionLike;
 use api::ApiDoc;
 use api::{
     abi, account_nonce, api_not_found, balance, block, block_hash, block_number, code, peers_count,
@@ -30,6 +34,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 #[macro_use]
 extern crate rocket;
+extern crate core;
 
 fn rocket() -> Rocket<Build> {
     rocket::build()
@@ -61,6 +66,11 @@ fn rocket() -> Rocket<Build> {
 
 #[rocket::main]
 async fn main() {
+    let con = my_redis::connection().ok().unwrap();
+    let is_open = con.is_open();
+    if !is_open {
+        panic!("connect redis failed!")
+    }
     init_local_utc_offset();
     if let Err(e) = rocket().launch().await {
         println!("Whoops! Rocket didn't launch!");
