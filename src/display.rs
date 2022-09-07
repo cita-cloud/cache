@@ -160,6 +160,8 @@ impl Display for Block {
                     "transaction_root": hex(&header.transactions_root),
                     "proposer": hex(&header.proposer),
                     "proof": hex(&self.proof),
+                    "state_root": hex(&self.state_root),
+
                 })
             }
             None => json!({}),

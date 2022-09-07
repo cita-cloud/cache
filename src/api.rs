@@ -364,6 +364,7 @@ impl<'r> FromRequest<'r> for ValidateResult<Value, ObjError> {
                     header: Some(header),
                     body: Some(RawTransactions { body: txs }),
                     proof: vec![0u8; 64],
+                    state_root: vec![0u8; 64],
                 };
                 ("block", block.display())
             }
