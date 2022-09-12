@@ -24,6 +24,7 @@ hex = "0.4"
 time = { version = "0.3", features = ["formatting", "local-offset"] }
 crossbeam = "0.8"
 lazy_static = "1.4"
+tokio = { version = "1.20", features = ["full"] }
 
 # crypto SM
 libsm = "0.5.0"
@@ -36,6 +37,9 @@ secp256k1 = { version = "0.24", features = ["rand-std", "recovery"] }
 tentacle-multiaddr = "0.3"
 
 redis = "0.21.5"
+r2d2 = "*"
+r2d2_redis = "*"
+thiserror =  "1"
 
 [build-dependencies]
 tonic-build = "0.7"

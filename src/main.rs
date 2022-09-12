@@ -19,24 +19,32 @@ mod display;
 mod health_check;
 mod redis;
 mod util;
+mod core;
+mod context;
+mod from_request;
+mod error;
 
 use crate::display::init_local_utc_offset;
-use crate::redis as my_redis;
-use ::redis::ConnectionLike;
 use api::ApiDoc;
 use api::{
     abi, account_nonce, api_not_found, balance, block, block_hash, block_number, code, peers_count,
     peers_info, receipt, system_config, tx, uri_not_found, version,
 };
-use rocket::{routes, Build, Rocket};
+use rocket::{routes, Build, Rocket, tokio};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+use crate::context::Context;
+use crate::core::controller::ControllerClient;
+use crate::core::evm::EvmClient;
+use crate::core::executor::ExecutorClient;
+use crate::redis::pool;
 
 #[macro_use]
 extern crate rocket;
-extern crate core;
 
 fn rocket() -> Rocket<Build> {
+    let ctx: Context<ControllerClient, ExecutorClient, EvmClient> = Context::new();
+
     rocket::build()
         .mount(
             "/",
@@ -62,16 +70,13 @@ fn rocket() -> Rocket<Build> {
         )
         .register("/", catchers![uri_not_found])
         .register("/api", catchers![api_not_found])
+        .manage(ctx)
 }
 
 #[rocket::main]
 async fn main() {
-    let con = my_redis::connection().ok().unwrap();
-    let is_open = con.is_open();
-    if !is_open {
-        panic!("connect redis failed!")
-    }
     init_local_utc_offset();
+
     if let Err(e) = rocket().launch().await {
         println!("Whoops! Rocket didn't launch!");
         // We drop the error to get a Rocket-formatted panic.

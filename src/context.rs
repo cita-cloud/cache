@@ -1,0 +1,83 @@
+use anyhow::{Result};
+use cita_cloud_proto::{
+    controller::rpc_service_client::RpcServiceClient,
+    executor::executor_service_client::ExecutorServiceClient,
+};
+use cita_cloud_proto::client::{ClientOptions, InterceptedSvc};
+use cita_cloud_proto::retry::RetryClient;
+use r2d2_redis::RedisConnectionManager;
+use tokio::sync::OnceCell;
+use crate::core::controller::{ControllerBehaviour};
+use crate::core::evm::EvmBehaviour;
+use crate::core::executor::ExecutorBehaviour;
+use crate::{ControllerClient, EvmClient, ExecutorClient, pool};
+use crate::redis::Pool;
+
+
+pub const CLIENT_NAME: &str = "cache";
+
+pub struct Context<Co, Ex, Ev> {
+    /// Those gRPC client are connected lazily.
+    pub controller: Co,
+    pub executor: Ex,
+    pub evm: Ev,
+    pub redis_pool: Pool
+}
+
+impl<Co, Ex, Ev> Context<Co, Ex, Ev> {
+    pub fn new() -> Self
+        where
+            Co: ControllerBehaviour + Clone,
+            Ex: ExecutorBehaviour + Clone,
+            Ev: EvmBehaviour + Clone,
+    {
+        let controller_client = OnceCell::new_with(Some({
+            let client_options = ClientOptions::new(
+                CLIENT_NAME.to_string(),
+                format!("http://127.0.0.1:{}", 50004),
+            );
+            match client_options.connect_rpc() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
+        }));
+        let executor_client = OnceCell::new_with(Some({
+            let client_options = ClientOptions::new(
+                CLIENT_NAME.to_string(),
+                format!("http://127.0.0.1:{}", 50002),
+            );
+            match client_options.connect_executor() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
+        }));
+
+        let evm_client = OnceCell::new_with(Some({
+            let client_options = ClientOptions::new(
+                CLIENT_NAME.to_string(),
+                format!("http://127.0.0.1:{}", 50002),
+            );
+            match client_options.connect_evm() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
+        }));
+
+
+        let controller = Co::connect(controller_client);
+        let executor = Ex::connect(executor_client);
+        let evm = Ev::connect(evm_client);
+        let redis_pool = pool();
+        Self {
+            controller,
+            executor,
+            evm,
+            redis_pool,
+        }
+    }
+
+    pub fn get_redis_connection(&self) -> r2d2::PooledConnection<RedisConnectionManager> {
+        self.redis_pool.get().unwrap()
+    }
+
+}
