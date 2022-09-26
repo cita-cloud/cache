@@ -1,4 +1,3 @@
-use std::num::ParseIntError;
 // Copyright Rivtower Technologies LLC.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +14,7 @@ use std::num::ParseIntError;
 use crate::constant::KEY_PREFIX;
 use crate::crypto::{Address, ArrayLike, Hash};
 use anyhow::{Context, Result};
+use std::num::ParseIntError;
 
 pub fn remove_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
