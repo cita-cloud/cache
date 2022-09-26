@@ -48,9 +48,9 @@ pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     con.set::<String, T, String>(key, val)
 }
 
-pub fn delete(
-    mut con: PooledConnection<RedisConnectionManager>,
-    key: String,
-) -> Result<String, r2d2_redis::redis::RedisError> {
-    con.del(key)
-}
+// pub fn delete(
+//     mut con: PooledConnection<RedisConnectionManager>,
+//     key: String,
+// ) -> Result<String, r2d2_redis::redis::RedisError> {
+//     con.del(key)
+// }

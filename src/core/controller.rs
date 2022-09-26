@@ -290,16 +290,16 @@ pub trait SignerBehaviour {
 }
 
 // It's actually the implementation details of the current controller service.
-#[repr(u64)]
-#[derive(Debug, Clone, Copy)]
-pub enum UtxoType {
-    Admin = 1002,
-    BlockInterval = 1003,
-    Validators = 1004,
-    EmergencyBrake = 1005,
-    BlockLimit = 1006,
-    QuotaLimit = 1007,
-}
+// #[repr(u64)]
+// #[derive(Debug, Clone, Copy)]
+// pub enum UtxoType {
+//     Admin = 1002,
+//     BlockInterval = 1003,
+//     Validators = 1004,
+//     EmergencyBrake = 1005,
+//     BlockLimit = 1006,
+//     QuotaLimit = 1007,
+// }
 
 #[tonic::async_trait]
 pub trait TransactionSenderBehaviour {
@@ -322,9 +322,9 @@ pub trait TransactionSenderBehaviour {
     ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync;
-    async fn send_utxo<S>(&self, signer: &S, output: Vec<u8>, utxo_type: UtxoType) -> Result<Hash>
-    where
-        S: SignerBehaviour + Send + Sync;
+    // async fn send_utxo<S>(&self, signer: &S, output: Vec<u8>, utxo_type: UtxoType) -> Result<Hash>
+    // where
+    //     S: SignerBehaviour + Send + Sync;
 }
 
 #[tonic::async_trait]
@@ -379,34 +379,34 @@ where
         self.send_raw_tx(signer, raw_tx).await
     }
 
-    async fn send_utxo<S>(&self, signer: &S, output: Vec<u8>, utxo_type: UtxoType) -> Result<Hash>
-    where
-        S: SignerBehaviour + Send + Sync,
-    {
-        let system_config = self
-            .get_system_config()
-            .await
-            .context("failed to get system config")?;
-        let raw_utxo = {
-            let lock_id = utxo_type as u64;
-            let pre_tx_hash = match utxo_type {
-                UtxoType::Admin => &system_config.admin_pre_hash,
-                UtxoType::BlockInterval => &system_config.block_interval_pre_hash,
-                UtxoType::Validators => &system_config.validators_pre_hash,
-                UtxoType::EmergencyBrake => &system_config.emergency_brake_pre_hash,
-                UtxoType::QuotaLimit => &system_config.quota_limit_pre_hash,
-                UtxoType::BlockLimit => &system_config.block_limit_pre_hash,
-            }
-            .clone();
-
-            CloudUtxoTransaction {
-                version: system_config.version,
-                pre_tx_hash,
-                output,
-                lock_id,
-            }
-        };
-
-        self.send_raw_utxo(signer, raw_utxo).await
-    }
+    // async fn send_utxo<S>(&self, signer: &S, output: Vec<u8>, utxo_type: UtxoType) -> Result<Hash>
+    // where
+    //     S: SignerBehaviour + Send + Sync,
+    // {
+    //     let system_config = self
+    //         .get_system_config()
+    //         .await
+    //         .context("failed to get system config")?;
+    //     let raw_utxo = {
+    //         let lock_id = utxo_type as u64;
+    //         let pre_tx_hash = match utxo_type {
+    //             UtxoType::Admin => &system_config.admin_pre_hash,
+    //             UtxoType::BlockInterval => &system_config.block_interval_pre_hash,
+    //             UtxoType::Validators => &system_config.validators_pre_hash,
+    //             UtxoType::EmergencyBrake => &system_config.emergency_brake_pre_hash,
+    //             UtxoType::QuotaLimit => &system_config.quota_limit_pre_hash,
+    //             UtxoType::BlockLimit => &system_config.block_limit_pre_hash,
+    //         }
+    //         .clone();
+    //
+    //         CloudUtxoTransaction {
+    //             version: system_config.version,
+    //             pre_tx_hash,
+    //             output,
+    //             lock_id,
+    //         }
+    //     };
+    //
+    //     self.send_raw_utxo(signer, raw_utxo).await
+    // }
 }
