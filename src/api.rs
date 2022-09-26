@@ -13,46 +13,17 @@
 // limitations under the License.
 extern crate rocket;
 
-use std::future::Future;
 use crate::constant::{FAILURE, SUCCESS, SUCCESS_MESSAGE};
-use crate::display::Display;
-use anyhow::{Error, Result};
 use rocket::serde::Serialize;
 use utoipa::Component;
 use utoipa::OpenApi;
 
-use crate::util::{key, key_without_param, parse_addr, parse_hash, parse_u64, remove_0x};
-use cita_cloud_proto::{
-    blockchain::{
-        raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions, Transaction,
-        UnverifiedTransaction, Witness,
-    },
-    common::{NodeInfo, NodeNetInfo, TotalNodeInfo},
-    controller::{SystemConfig, Flag},
-    evm::{Balance, ByteAbi, ByteCode, Log, Nonce, Receipt},
-};
-use r2d2_redis::redis::ConnectionLike;
-use r2d2_redis::redis::{ToRedisArgs, FromRedisValue};
-use rocket::{Request, State};
-
-use rocket::request::{FromRequest, Outcome};
+use crate::context::Context;
+use crate::error::ValidateError;
+use crate::from_request::ValidateResult;
+use crate::{ControllerClient, EvmClient, ExecutorClient};
 use rocket::serde::json::Json;
 use serde_json::Value;
-use crate::redis::{Pool};
-use r2d2_redis::redis::Commands;
-use rocket::http::Status;
-use r2d2::{Error as R2d2Err, PooledConnection};
-use r2d2_redis::redis::RedisError as OperateErr;
-use r2d2_redis::RedisConnectionManager;
-use rocket::futures::TryFutureExt;
-use crate::{ControllerClient, EvmClient, ExecutorClient};
-use crate::context::Context;
-use crate::core::controller::ControllerBehaviour;
-use crate::core::evm::EvmBehaviour;
-use crate::crypto::Address;
-use crate::error::ValidateError;
-use crate::from_request::{Entity, ParamType, ValidateResult};
-
 
 #[catch(404)]
 pub fn uri_not_found() -> Json<String> {
@@ -91,43 +62,21 @@ pub struct FailureResult {
     pub message: String,
 }
 
-
-fn match_result_new<T, E: std::fmt::Display>(result: ValidateResult<T, E>) -> Json<QueryResult<T>> {
+fn match_result<T: Default>(result: ValidateResult<T, ValidateError>) -> Json<QueryResult<T>> {
     match result {
-        ValidateResult::Ok(num) => Json(QueryResult {
-            status: SUCCESS,
-            data: Some(num),
-            message: SUCCESS_MESSAGE.to_string(),
-        }),
-        ValidateResult::Err(e) => Json(QueryResult {
-            status: FAILURE,
-            data: None,
-            message: format!("{}", e),
-        }),
+        ValidateResult::Ok(r) => success(r),
+        ValidateResult::Err(e) => fail(e),
     }
 }
 
 ///Get current block number
 #[get("/get-block-number")]
 #[utoipa::path(get, path = "/api/get-block-number")]
-pub async fn block_number(result: ValidateResult<Entity<u64>, ValidateError>,
-                          ctx: Context<ControllerClient, ExecutorClient, EvmClient>) -> Json<QueryResult<u64>> {
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-
-    if entity.val == 0 {
-        match ctx.controller.get_block_number(false).await {
-            Ok(val) => {
-                ctx.get_redis_connection().set::<String, u64, String>(entity.key, val);
-                success(val)
-            }
-            Err(e) => fail(e),
-        }
-    } else {
-        success(entity.val)
-    }
+pub async fn block_number(
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
+    match_result(result)
 }
 
 fn success<T>(val: T) -> Json<QueryResult<T>> {
@@ -138,7 +87,7 @@ fn success<T>(val: T) -> Json<QueryResult<T>> {
     })
 }
 
-fn fail<T, E: std::fmt::Display>(e: E) -> Json<QueryResult<T>> {
+fn fail<T>(e: ValidateError) -> Json<QueryResult<T>> {
     Json(QueryResult {
         status: FAILURE,
         data: None,
@@ -157,30 +106,11 @@ params(
 )]
 pub async fn abi(
     address: &str,
-    result: ValidateResult<Entity<String>, ValidateError>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
-) -> Json<QueryResult<String>> {
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
     println!("get-abi address {}", address);
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if let ParamType::Address(address) = entity.param {
-        if entity.val == String::default() {
-            match ctx.evm.get_abi(address).await {
-                Ok(val) => {
-                    let val_str = val.display();
-                    ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                    success(val_str)
-                }
-                Err(e) => fail(e),
-            }
-        } else {
-            success(entity.val)
-        }
-    } else {
-        success(String::default())
-    }
+    match_result(result)
 }
 
 ///Get balance by account address
@@ -194,31 +124,11 @@ params(
 )]
 pub async fn balance(
     address: &str,
-    result: ValidateResult<Entity<String>, ValidateError>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
-) -> Json<QueryResult<String>> {
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
     println!("get-balance address {}", address);
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match entity.param {
-            ParamType::Address(address) => match ctx.evm.get_balance(address).await {
-                Ok(val) => {
-                    let val_str = val.display();
-                    println!("get-balance value {}", val_str);
-
-                    ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                    success(val_str)
-                }
-                Err(e) => fail(e),
-            },
-            _ => fail("param type not match!"),
-        }
-    } else {
-        success(entity.val)
-    }
+    match_result(result)
 }
 
 ///Get block by height or hash
@@ -232,42 +142,11 @@ params(
 )]
 pub async fn block(
     hash_or_height: &str,
-    result: ValidateResult<Entity<String>, ValidateError>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
-) -> Json<QueryResult<String>> {
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
     println!("get-block hash_or_height {}", hash_or_height);
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match entity.param {
-            ParamType::NumOrHash(height, hash) => if height == 0 {
-                match ctx.controller.get_block_detail_by_hash(hash).await {
-                    Ok(val) => {
-                        let val_str = val.display();
-
-                        ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                        success(val_str)
-                    }
-                    Err(e) => fail(e),
-                }
-            } else {
-                match ctx.controller.get_block_detail_by_number(height).await {
-                    Ok(val) => {
-                        let val_str = val.display();
-
-                        ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                        success(val_str)
-                    }
-                    Err(e) => fail(e),
-                }
-            },
-            _ => fail("para type not match!"),
-        }
-    } else {
-        success(entity.val)
-    }
+    match_result(result)
 }
 
 ///Get code by contract address
@@ -281,31 +160,11 @@ params(
 )]
 pub async fn code(
     address: &str,
-    result: ValidateResult<Entity<String>, ValidateError>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
-) -> Json<QueryResult<String>> {
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
     println!("get-code address {}", address);
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match entity.param {
-            ParamType::Address(address) => match ctx.evm.get_code(address).await {
-                Ok(val) => {
-                    let val_str = val.display();
-                    println!("get-code value {}", val_str);
-
-                    ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                    success(val_str)
-                }
-                Err(e) => fail(e),
-            },
-            _ => fail("param type not match!")
-        }
-    } else {
-        success(entity.val)
-    }
+    match_result(result)
 }
 
 ///Get tx by hash
@@ -317,73 +176,33 @@ params(
 ("hash" = String, path, description = "The tx hash"),
 )
 )]
-pub async fn tx(hash: &str, result: ValidateResult<Entity<u64>, ValidateError>,
-          ctx: Context<ControllerClient, ExecutorClient, EvmClient>, ) -> Json<QueryResult<u64>> {
+pub async fn tx(
+    hash: &str,
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
     println!("get-tx hash {}", hash);
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == 0 {
-        match ctx.controller.get_peer_count().await {
-            Ok(val) => {
-                println!("get-peers-count value {}", val);
-
-                ctx.get_redis_connection().set::<String, u64, String>(entity.key, val);
-                success(val)
-            }
-            Err(e) => fail(e),
-        }
-    } else {
-        success(entity.val)
-    }
+    match_result(result)
 }
 
 ///Get peers count
 #[get("/get-peers-count")]
 #[utoipa::path(get, path = "/api/get-peers-count")]
-pub async fn peers_count(result: ValidateResult<Entity<u64>, ValidateError>,
-                         ctx: Context<ControllerClient, ExecutorClient, EvmClient>, ) -> Json<QueryResult<u64>> {
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == 0 {
-        match ctx.controller.get_peer_count().await {
-            Ok(val) => {
-                ctx.get_redis_connection().set::<String, u64, String>(entity.key, val);
-                success(val)
-            }
-            Err(e) => fail(e),
-        }
-    } else {
-        success(entity.val)
-    }
+pub async fn peers_count(
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
+    match_result(result)
 }
 
 ///Get peers info
 #[get("/get-peers-info")]
 #[utoipa::path(get, path = "/api/get-peers-info")]
-pub async fn peers_info(result: ValidateResult<Entity<String>, ValidateError>,
-                  ctx: Context<ControllerClient, ExecutorClient, EvmClient>, ) -> Json<QueryResult<String>> {
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match ctx.controller.get_peers_info().await {
-            Ok(val) => {
-                let val_str = val.display();
-                println!("get-peers-info value {}", val_str);
-
-                ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                success(val_str.clone())
-            }
-            Err(e) => fail(e),
-        }
-    } else {
-        success(entity.val)
-    }
+pub async fn peers_info(
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
+    match_result(result)
 }
 
 ///Get nonce by account address
@@ -397,31 +216,11 @@ params(
 )]
 pub async fn account_nonce(
     address: &str,
-    result: ValidateResult<Entity<String>, ValidateError>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
-) -> Json<QueryResult<String>> {
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
     println!("get-account-nonce address {}", address);
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match entity.param {
-            ParamType::Address(address) => match ctx.evm.get_tx_count(address).await {
-                Ok(val) => {
-                    let val_str = val.display();
-                    println!("get-account-nonce value {}", val_str);
-
-                    ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                    success(val_str)
-                }
-                Err(e) => fail(e),
-            },
-            _ => fail("param type not match!")
-        }
-    } else {
-        success(entity.val)
-    }
+    match_result(result)
 }
 
 ///Get tx receipt by hash
@@ -433,76 +232,33 @@ params(
 ("hash" = String, path, description = "The tx hash"),
 )
 )]
-pub async fn receipt(hash: &str, result: ValidateResult<Entity<String>, ValidateError>,
-               ctx: Context<ControllerClient, ExecutorClient, EvmClient>, ) -> Json<QueryResult<String>> {
+pub async fn receipt(
+    hash: &str,
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
     println!("get-receipt hash {}", hash);
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match entity.param {
-            ParamType::Hash(hash) => match ctx.evm.get_receipt(hash).await {
-                Ok(val) => {
-                    let val_str = val.display();
-                    println!("get-receipt hash {}", val_str);
-
-                    ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                    success(val_str)
-                }
-                Err(e) => fail(e),
-            },
-            _ => fail("param type not match!")
-        }
-    } else {
-        success(entity.val)
-    }
+    match_result(result)
 }
 
 ///Get chain version
 #[get("/get-version")]
 #[utoipa::path(get, path = "/api/get-version")]
-pub async fn version(result: ValidateResult<Entity<String>, ValidateError>,
-               ctx: Context<ControllerClient, ExecutorClient, EvmClient>, ) -> Json<QueryResult<String>> {
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match ctx.controller.get_version().await {
-            Ok(val) => {
-                let val = val.to_string();
-                ctx.get_redis_connection().set::<String, String, String>(entity.key, val.clone());
-                success(val)
-            }
-            Err(e) => fail(e),
-        }
-    } else {
-        success(entity.val)
-    }
+pub async fn version(
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
+    match_result(result)
 }
 
 ///Get system config
 #[get("/get-system-config")]
 #[utoipa::path(get, path = "/api/get-system-config")]
-pub async fn system_config(result: ValidateResult<Entity<String>, ValidateError>,
-                     ctx: Context<ControllerClient, ExecutorClient, EvmClient>,) -> Json<QueryResult<String>> {
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match ctx.controller.get_system_config().await {
-            Ok(val) => {
-                let val_str = val.display();
-                ctx.get_redis_connection().set::<String, String, String>(entity.key, val_str.clone());
-                success(val_str)
-            }
-            Err(e) => fail(e),
-        }
-    } else {
-        success(entity.val)
-    }
+pub async fn system_config(
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
+    match_result(result)
 }
 
 ///Get block hash by block number
@@ -516,49 +272,30 @@ params(
 )]
 pub async fn block_hash(
     block_number: usize,
-    result: ValidateResult<Entity<String>, ValidateError>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
-) -> Json<QueryResult<String>> {
+    result: ValidateResult<Value, ValidateError>,
+    _ctx: Context<ControllerClient, ExecutorClient, EvmClient>,
+) -> Json<QueryResult<Value>> {
     println!("get-block-hash block_number {}", block_number);
-    let entity = match result {
-        ValidateResult::Ok(entity) => entity,
-        ValidateResult::Err(e) => return fail(e),
-    };
-    if entity.val == String::default() {
-        match entity.param {
-            ParamType::Number(height) => match ctx.controller.get_block_hash(height).await {
-                Ok(val) => {
-                    let val_str = val.display();
-                    ctx.get_redis_connection().set::< String, String, String > (entity.key, val_str.clone());
-                    success(val_str)
-                }
-                Err(e) => fail(e),
-            },
-            _ => fail("param type not match!")
-
-        }
-    } else {
-        success(entity.val)
-    }
+    match_result(result)
 }
 
 #[derive(OpenApi)]
 #[openapi(
-handlers(
-block_number,
-abi,
-balance,
-block,
-code,
-tx,
-peers_count,
-peers_info,
-account_nonce,
-receipt,
-system_config,
-block_hash,
-version
-),
-components(SuccessResult, FailureResult)
+    handlers(
+        block_number,
+        abi,
+        balance,
+        block,
+        code,
+        tx,
+        peers_count,
+        peers_info,
+        account_nonce,
+        receipt,
+        system_config,
+        block_hash,
+        version
+    ),
+    components(SuccessResult, FailureResult)
 )]
 pub struct ApiDoc;

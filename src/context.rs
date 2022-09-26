@@ -1,18 +1,11 @@
-use anyhow::{Result};
-use cita_cloud_proto::{
-    controller::rpc_service_client::RpcServiceClient,
-    executor::executor_service_client::ExecutorServiceClient,
-};
-use cita_cloud_proto::client::{ClientOptions, InterceptedSvc};
-use cita_cloud_proto::retry::RetryClient;
-use r2d2_redis::RedisConnectionManager;
-use tokio::sync::OnceCell;
-use crate::core::controller::{ControllerBehaviour};
+use crate::core::controller::ControllerBehaviour;
 use crate::core::evm::EvmBehaviour;
 use crate::core::executor::ExecutorBehaviour;
-use crate::{ControllerClient, EvmClient, ExecutorClient, pool};
+use crate::pool;
 use crate::redis::Pool;
-
+use cita_cloud_proto::client::ClientOptions;
+use r2d2_redis::RedisConnectionManager;
+use tokio::sync::OnceCell;
 
 pub const CLIENT_NAME: &str = "cache";
 
@@ -21,15 +14,15 @@ pub struct Context<Co, Ex, Ev> {
     pub controller: Co,
     pub executor: Ex,
     pub evm: Ev,
-    pub redis_pool: Pool
+    pub redis_pool: Pool,
 }
 
 impl<Co, Ex, Ev> Context<Co, Ex, Ev> {
     pub fn new() -> Self
-        where
-            Co: ControllerBehaviour + Clone,
-            Ex: ExecutorBehaviour + Clone,
-            Ev: EvmBehaviour + Clone,
+    where
+        Co: ControllerBehaviour + Clone,
+        Ex: ExecutorBehaviour + Clone,
+        Ev: EvmBehaviour + Clone,
     {
         let controller_client = OnceCell::new_with(Some({
             let client_options = ClientOptions::new(
@@ -63,7 +56,6 @@ impl<Co, Ex, Ev> Context<Co, Ex, Ev> {
             }
         }));
 
-
         let controller = Co::connect(controller_client);
         let executor = Ex::connect(executor_client);
         let evm = Ev::connect(evm_client);
@@ -79,5 +71,4 @@ impl<Co, Ex, Ev> Context<Co, Ex, Ev> {
     pub fn get_redis_connection(&self) -> r2d2::PooledConnection<RedisConnectionManager> {
         self.redis_pool.get().unwrap()
     }
-
 }

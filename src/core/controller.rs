@@ -18,9 +18,10 @@ use anyhow::Context;
 use anyhow::Result;
 
 use prost::Message;
-use tonic::transport::Channel;
 
 use crate::crypto::{ArrayLike, Hash};
+use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
+use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
     blockchain::{
         raw_transaction::Tx, Block, CompactBlock, RawTransaction,
@@ -28,17 +29,14 @@ use cita_cloud_proto::{
         UtxoTransaction as CloudUtxoTransaction, Witness,
     },
     common::{Empty, Hash as CloudHash, NodeNetInfo, TotalNodeInfo},
-    controller::{BlockNumber, Flag, SystemConfig},
     controller::rpc_service_client::RpcServiceClient,
+    controller::{BlockNumber, Flag, SystemConfig},
 };
-use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
-use cita_cloud_proto::retry::RetryClient;
 use tokio::sync::OnceCell;
-
 
 #[derive(Debug, Clone)]
 pub struct ControllerClient {
-    retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>
+    retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>,
 }
 #[tonic::async_trait]
 pub trait ControllerBehaviour {
@@ -72,9 +70,7 @@ pub trait ControllerBehaviour {
 #[tonic::async_trait]
 impl ControllerBehaviour for ControllerClient {
     fn connect(retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>) -> Self {
-        Self {
-            retry_client
-        }
+        Self { retry_client }
     }
 
     async fn send_raw(&self, raw: RawTransaction) -> Result<Hash> {
@@ -88,9 +84,7 @@ impl ControllerBehaviour for ControllerClient {
     async fn get_version(&self) -> Result<String> {
         let client = self.retry_client.get().unwrap();
 
-        let version = client.get_version(Empty {})
-            .await?
-            .version;
+        let version = client.get_version(Empty {}).await?.version;
 
         Ok(version)
     }
@@ -98,8 +92,7 @@ impl ControllerBehaviour for ControllerClient {
     async fn get_system_config(&self) -> Result<SystemConfig> {
         let client = self.retry_client.get().unwrap();
 
-        let resp = client.get_system_config(Empty {})
-            .await?;
+        let resp = client.get_system_config(Empty {}).await?;
 
         Ok(resp)
     }
@@ -108,8 +101,7 @@ impl ControllerBehaviour for ControllerClient {
         let client = self.retry_client.get().unwrap();
 
         let flag = Flag { flag: for_pending };
-        let resp =client.get_block_number(flag)
-            .await?;
+        let resp = client.get_block_number(flag).await?;
 
         Ok(resp.block_number)
     }
@@ -118,8 +110,7 @@ impl ControllerBehaviour for ControllerClient {
         let client = self.retry_client.get().unwrap();
 
         let block_number = BlockNumber { block_number };
-        let resp = client.get_block_hash(block_number)
-            .await?;
+        let resp = client.get_block_hash(block_number).await?;
         Hash::try_from_slice(&resp.hash)
             .context("controller returns an invalid block hash, maybe we are using a different signing algorithm?")
     }
@@ -128,8 +119,7 @@ impl ControllerBehaviour for ControllerClient {
         let client = self.retry_client.get().unwrap();
 
         let block_number = BlockNumber { block_number };
-        let resp = client.get_block_by_number(block_number)
-            .await?;
+        let resp = client.get_block_by_number(block_number).await?;
 
         Ok(resp)
     }
@@ -140,8 +130,7 @@ impl ControllerBehaviour for ControllerClient {
         let hash = CloudHash {
             hash: hash.to_vec(),
         };
-        let resp = client.get_block_by_hash(hash)
-            .await?;
+        let resp = client.get_block_by_hash(hash).await?;
         Ok(resp)
     }
 
@@ -149,8 +138,7 @@ impl ControllerBehaviour for ControllerClient {
         let client = self.retry_client.get().unwrap();
 
         let block_number = BlockNumber { block_number };
-        let resp = client.get_block_detail_by_number(block_number)
-            .await?;
+        let resp = client.get_block_detail_by_number(block_number).await?;
         Ok(resp)
     }
 
@@ -159,8 +147,7 @@ impl ControllerBehaviour for ControllerClient {
 
         let block_number = self.get_block_by_hash(hash).await?.header.unwrap().height;
         let block_number = BlockNumber { block_number };
-        let resp = client.get_block_detail_by_number(block_number)
-            .await?;
+        let resp = client.get_block_detail_by_number(block_number).await?;
 
         Ok(resp)
     }
@@ -202,8 +189,7 @@ impl ControllerBehaviour for ControllerClient {
     async fn get_peer_count(&self) -> Result<u64> {
         let client = self.retry_client.get().unwrap();
 
-        let resp = client.get_peer_count( Empty {})
-            .await?;
+        let resp = client.get_peer_count(Empty {}).await?;
 
         Ok(resp.peer_count)
     }
@@ -211,8 +197,7 @@ impl ControllerBehaviour for ControllerClient {
     async fn get_peers_info(&self) -> Result<TotalNodeInfo> {
         let client = self.retry_client.get().unwrap();
 
-        let resp = client.get_peers_info( Empty {})
-            .await?;
+        let resp = client.get_peers_info(Empty {}).await?;
 
         Ok(resp)
     }
@@ -224,8 +209,7 @@ impl ControllerBehaviour for ControllerClient {
             multi_address: multiaddr,
             ..Default::default()
         };
-        let resp = client.add_node(node_info)
-            .await?;
+        let resp = client.add_node(node_info).await?;
 
         Ok(resp.code)
     }

@@ -14,19 +14,18 @@
 
 use anyhow::Context as _;
 use anyhow::Result;
-use tonic::transport::Channel;
 
 use super::controller::{SignerBehaviour, TransactionSenderBehaviour};
 use crate::{
     crypto::{Address, ArrayLike, Hash},
     util::parse_addr,
 };
-use cita_cloud_proto::{
-    common::{Address as CloudAddress, Hash as CloudHash},
-    evm::{Balance, ByteAbi, ByteCode, Nonce, Receipt, rpc_service_client::RpcServiceClient},
-};
 use cita_cloud_proto::client::{EVMClientTrait, InterceptedSvc};
 use cita_cloud_proto::retry::RetryClient;
+use cita_cloud_proto::{
+    common::{Address as CloudAddress, Hash as CloudHash},
+    evm::{rpc_service_client::RpcServiceClient, Balance, ByteAbi, ByteCode, Nonce, Receipt},
+};
 use tokio::sync::OnceCell;
 
 // TODO: use constant array for these constant to avoid runtime parsing.
@@ -52,7 +51,7 @@ mod constant {
 
 #[derive(Debug, Clone)]
 pub struct EvmClient {
-    retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>
+    retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>,
 }
 
 #[tonic::async_trait]
@@ -69,9 +68,7 @@ pub trait EvmBehaviour {
 #[tonic::async_trait]
 impl EvmBehaviour for EvmClient {
     fn connect(retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>) -> Self {
-        Self {
-            retry_client
-        }
+        Self { retry_client }
     }
 
     async fn get_receipt(&self, hash: Hash) -> Result<Receipt> {
@@ -79,7 +76,8 @@ impl EvmBehaviour for EvmClient {
         let hash = CloudHash {
             hash: hash.to_vec(),
         };
-        client.get_transaction_receipt(hash)
+        client
+            .get_transaction_receipt(hash)
             .await
             .context("failed to get receipt")
     }
@@ -90,9 +88,7 @@ impl EvmBehaviour for EvmClient {
         let addr = CloudAddress {
             address: addr.to_vec(),
         };
-        client.get_code(addr)
-            .await
-            .context("failed to get code")
+        client.get_code(addr).await.context("failed to get code")
     }
 
     async fn get_balance(&self, addr: Address) -> Result<Balance> {
@@ -101,7 +97,8 @@ impl EvmBehaviour for EvmClient {
         let addr = CloudAddress {
             address: addr.to_vec(),
         };
-        client.get_balance(addr)
+        client
+            .get_balance(addr)
             .await
             .context("failed to get balance")
     }
@@ -124,9 +121,7 @@ impl EvmBehaviour for EvmClient {
         let addr = CloudAddress {
             address: addr.to_vec(),
         };
-        client.get_abi(addr)
-            .await
-            .context("failed to get abi")
+        client.get_abi(addr).await.context("failed to get abi")
     }
 }
 

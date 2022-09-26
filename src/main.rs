@@ -14,30 +14,30 @@
 
 mod api;
 mod constant;
+mod context;
+mod core;
 mod crypto;
 mod display;
+mod error;
+mod from_request;
 mod health_check;
 mod redis;
 mod util;
-mod core;
-mod context;
-mod from_request;
-mod error;
 
+use crate::context::Context;
+use crate::core::controller::ControllerClient;
+use crate::core::evm::EvmClient;
+use crate::core::executor::ExecutorClient;
 use crate::display::init_local_utc_offset;
+use crate::redis::pool;
 use api::ApiDoc;
 use api::{
     abi, account_nonce, api_not_found, balance, block, block_hash, block_number, code, peers_count,
     peers_info, receipt, system_config, tx, uri_not_found, version,
 };
-use rocket::{routes, Build, Rocket, tokio};
+use rocket::{routes, Build, Rocket};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
-use crate::context::Context;
-use crate::core::controller::ControllerClient;
-use crate::core::evm::EvmClient;
-use crate::core::executor::ExecutorClient;
-use crate::redis::pool;
 
 #[macro_use]
 extern crate rocket;

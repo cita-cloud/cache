@@ -13,18 +13,18 @@
 // limitations under the License.
 
 use anyhow::{Context, Result};
-use cita_cloud_proto::client::{CryptoClientTrait, ExecutorClientTrait, InterceptedSvc};
-use tonic::transport::Channel;
+use cita_cloud_proto::client::{ExecutorClientTrait, InterceptedSvc};
 
 use crate::crypto::{Address, ArrayLike};
-use cita_cloud_proto::executor::{CallRequest, CallResponse, executor_service_client::ExecutorServiceClient,
+use cita_cloud_proto::executor::{
+    executor_service_client::ExecutorServiceClient, CallRequest, CallResponse,
 };
 use cita_cloud_proto::retry::RetryClient;
 use tokio::sync::OnceCell;
 
 #[derive(Debug, Clone)]
 pub struct ExecutorClient {
-    retry_client: OnceCell<RetryClient<ExecutorServiceClient<InterceptedSvc>>>
+    retry_client: OnceCell<RetryClient<ExecutorServiceClient<InterceptedSvc>>>,
 }
 
 #[tonic::async_trait]
@@ -42,9 +42,7 @@ pub trait ExecutorBehaviour {
 #[tonic::async_trait]
 impl ExecutorBehaviour for ExecutorClient {
     fn connect(retry_client: OnceCell<RetryClient<ExecutorServiceClient<InterceptedSvc>>>) -> Self {
-        Self {
-            retry_client
-        }
+        Self { retry_client }
     }
 
     async fn call(
@@ -65,7 +63,8 @@ impl ExecutorBehaviour for ExecutorClient {
             args: Vec::new(),
             height,
         };
-        client.call(req)
+        client
+            .call(req)
             .await
             .context("failed to do executor gRPC call")
     }
