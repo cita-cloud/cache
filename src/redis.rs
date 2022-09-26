@@ -52,5 +52,5 @@ pub fn delete(
     mut con: PooledConnection<RedisConnectionManager>,
     key: String,
 ) -> Result<String, r2d2_redis::redis::RedisError> {
-    con.del(key.clone())?
+    con.del(key)
 }
