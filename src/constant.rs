@@ -16,3 +16,4 @@ pub const SUCCESS: u64 = 1;
 pub const FAILURE: u64 = 0;
 pub const SUCCESS_MESSAGE: &str = "success";
 pub const KEY_PREFIX: &str = "cache";
+pub const ACCOUNTS_KEY_PREFIX: &str = "accounts";

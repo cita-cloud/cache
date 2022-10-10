@@ -15,10 +15,10 @@
 use std::num::ParseIntError;
 
 #[derive(Debug, thiserror::Error)]
-pub enum ValidateError {
+pub enum CacheError {
     #[error("uri isn't normalized")]
     Uri,
-    #[error("parse address error: {0}")]
+    #[error("parse address or data error: {0}")]
     ParseAddress(#[from] anyhow::Error),
     #[error("parse hash error")]
     ParseHash,
@@ -30,9 +30,15 @@ pub enum ValidateError {
     Operate(#[from] r2d2_redis::redis::RedisError),
     #[error("deserialize json error: {0}")]
     Deserialize(#[from] serde_json::error::Error),
-    #[error("Query {query_type} error: {detail}")]
+    #[error("Query {query_type} error: {detail:?}")]
     QueryCitaCloud {
         query_type: String,
         detail: anyhow::Error,
     },
+    #[error("serialize toml error: {0}")]
+    TomlSer(#[from] toml::ser::Error),
+    #[error("deserialize toml error: {0}")]
+    TomlDe(#[from] toml::de::Error),
+    #[error("the account is none")]
+    AccountIsNone,
 }

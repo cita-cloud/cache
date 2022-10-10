@@ -11,9 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use crate::constant::KEY_PREFIX;
-use crate::crypto::{Address, ArrayLike, Hash};
-use anyhow::{Context, Result};
+use crate::constant::{ACCOUNTS_KEY_PREFIX, KEY_PREFIX};
+use crate::crypto::{Address, ArrayLike, Crypto, Hash};
+use anyhow::{anyhow, Context, Result};
 use std::num::ParseIntError;
 
 pub fn remove_0x(s: &str) -> &str {
@@ -34,9 +34,58 @@ pub fn parse_hash(s: &str) -> Result<Hash> {
     Hash::try_from_slice(&input)
 }
 
+pub fn parse_value(s: &str) -> Result<[u8; 32]> {
+    let s = remove_0x(s);
+    if s.len() > 64 {
+        return Err(anyhow!("can't parse value, the given str is too long"));
+    }
+    // padding 0 to 32 bytes
+    let padded = format!("{:0>64}", s);
+    hex::decode(&padded)
+        .map(|v| v.try_into().unwrap())
+        .map_err(|e| anyhow!("invalid value: {e}"))
+}
+
 pub fn parse_u64(s: &str) -> Result<u64, ParseIntError> {
     s.parse::<u64>()
 }
+
+pub fn hex(data: &[u8]) -> String {
+    format!("0x{}", hex::encode(data))
+}
+
+pub fn hex_without_0x(data: &[u8]) -> String {
+    format!("{}", hex::encode(data))
+}
+
+pub fn parse_pk<C: Crypto>(s: &str) -> Result<C::PublicKey> {
+    let input = parse_data(s)?;
+    C::PublicKey::try_from_slice(&input)
+}
+
+pub fn parse_sk<C: Crypto>(s: &str) -> Result<C::SecretKey> {
+    let input = parse_data(s)?;
+    C::SecretKey::try_from_slice(&input)
+}
+
+// pub fn safe_save(path: impl AsRef<Path>, content: &[u8], overwrite_existing: bool) -> Result<()> {
+//     let path = path.as_ref();
+//     let dir = path
+//         .parent()
+//         .ok_or_else(|| anyhow!("cannot load containing dir"))?;
+//
+//     let mut tmp = NamedTempFile::new_in(dir)?;
+//     tmp.write_all(content)?;
+//
+//     let mut f = if overwrite_existing {
+//         tmp.persist(path)?
+//     } else {
+//         tmp.persist_noclobber(path)?
+//     };
+//     f.flush()?;
+//
+//     Ok(())
+// }
 
 pub fn key(key_type: &str, param: &str) -> String {
     format!("{}_{}_{}", KEY_PREFIX, key_type, param)
@@ -44,4 +93,8 @@ pub fn key(key_type: &str, param: &str) -> String {
 
 pub fn key_without_param(key_type: &str) -> String {
     format!("{}_{}", KEY_PREFIX, key_type)
+}
+
+pub fn hkey() -> String {
+    format!("{}_{}", KEY_PREFIX, ACCOUNTS_KEY_PREFIX)
 }

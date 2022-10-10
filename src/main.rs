@@ -12,16 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod api;
 mod constant;
 mod context;
 mod core;
 mod crypto;
 mod display;
 mod error;
+mod from_data;
 mod from_request;
 mod health_check;
 mod redis;
+mod rest_api;
 mod util;
 
 use crate::context::Context;
@@ -30,11 +31,12 @@ use crate::core::evm::EvmClient;
 use crate::core::executor::ExecutorClient;
 use crate::display::init_local_utc_offset;
 use crate::redis::pool;
-use api::ApiDoc;
-use api::{
-    abi, account_nonce, api_not_found, balance, block, block_hash, block_number, code, peers_count,
-    peers_info, receipt, system_config, tx, uri_not_found, version,
+use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
+use rest_api::get::{
+    abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
+    receipt, system_config, tx, version,
 };
+use rest_api::post::{create, generate_account};
 use rocket::{routes, Build, Rocket};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -65,7 +67,9 @@ fn rocket() -> Rocket<Build> {
                 receipt,
                 system_config,
                 block_hash,
-                version
+                version,
+                create,
+                generate_account,
             ],
         )
         .register("/", catchers![uri_not_found])

@@ -40,6 +40,11 @@ pub fn load(
     }
 }
 
+// pub fn exists(mut con: PooledConnection<RedisConnectionManager>,
+//               key: String,) -> Result<bool, r2d2_redis::redis::RedisError> {
+//     con.exists(key)
+// }
+
 pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     mut con: PooledConnection<RedisConnectionManager>,
     key: String,
@@ -54,3 +59,20 @@ pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
 // ) -> Result<String, r2d2_redis::redis::RedisError> {
 //     con.del(key)
 // }
+
+pub fn hset(
+    mut con: PooledConnection<RedisConnectionManager>,
+    hkey: String,
+    key: String,
+    val: String,
+) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con.hset::<String, String, String, u64>(hkey, key, val)
+}
+
+pub fn hget<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    mut con: PooledConnection<RedisConnectionManager>,
+    hkey: String,
+    key: T,
+) -> Result<String, r2d2_redis::redis::RedisError> {
+    con.hget(hkey, key)
+}
