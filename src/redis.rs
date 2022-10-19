@@ -76,3 +76,22 @@ pub fn hget<T: Clone + Default + FromRedisValue + ToRedisArgs>(
 ) -> Result<String, r2d2_redis::redis::RedisError> {
     con.hget(hkey, key)
 }
+
+pub fn zadd<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    mut con: PooledConnection<RedisConnectionManager>,
+    zkey: String,
+    member: T,
+    score: u64
+) -> Result<String, r2d2_redis::redis::RedisError> {
+    con.zadd(zkey, member, score)
+}
+
+
+pub fn zrange<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    mut con: PooledConnection<RedisConnectionManager>,
+    zkey: String,
+    start: isize,
+    stop: isize,
+) -> Result<Vec<T>, r2d2_redis::redis::RedisError> {
+    con.zrange(zkey, start, stop)
+}

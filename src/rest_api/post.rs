@@ -33,6 +33,17 @@ pub struct GenerateAccount {
     pub crypto_type: CryptoType,
 }
 
+#[derive(Component, Deserialize)]
+#[serde(crate = "rocket::serde")]
+#[component(example = json!({"crypto_type": "SM"}))]
+pub struct SendTx<'r> {
+    pub to: &'r str,
+    pub data: Option<&'r str>,
+    pub value: Option<&'r str>,
+    pub quota: Option<u64>,
+    pub valid_until_block: Option<i64>,
+}
+
 ///Create contract
 #[post("/create", data = "<result>")]
 #[utoipa::path(
@@ -116,5 +127,63 @@ pub async fn generate_account(
             json!({"crypto_type": maybe_locked.crypto_type(), "address": hex(maybe_locked.address()), "public_key": hex(maybe_locked.public_key())}),
         ),
         Err(e) => fail(CacheError::Operate(e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Context, ControllerClient, EvmClient, ExecutorClient, pool};
+    use crate::redis::{load, zadd, zrange};
+    use cita_cloud_proto::
+        blockchain::RawTransaction;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use cita_cloud_proto::client::ClientOptions;
+    use tokio::sync::OnceCell;
+    use crate::context::CLIENT_NAME;
+    use crate::core::controller::ControllerBehaviour;
+    use crate::util::{parse_hash, hex_without_0x, parse_data};
+    use prost::Message;
+    use crate::display::Display;
+
+    #[tokio::test]
+    async fn basic_test() {
+        let ctx: Context<ControllerClient, ExecutorClient, EvmClient> = Context::new();
+        if let Ok(data) = parse_hash("6a6551842224af1a4572d43bbf94e39cff53fb4c8698f1888d77b9d80f034d16") {
+            match ctx.controller.get_tx(data).await {
+                Ok(tx) =>  {
+                    let mut buf = vec![];
+                    tx.encode(&mut buf).unwrap();
+                    zadd(ctx.get_redis_connection(), "z_set".to_string(), hex_without_0x(&buf[..]), timestamp());
+                    match zrange::<String>(ctx.get_redis_connection(), "z_set".to_string(), 0isize, -1isize) {
+                        Ok(data) => {
+                            for member in data {
+                                let decoded: RawTransaction = Message::decode(&parse_data(member.as_str()).unwrap()[..]).unwrap();
+                                println!("{}", decoded.to_json());
+                            }
+
+                        },
+                        Err(e) => {}
+                    }
+                },
+                Err(detail) => {  }
+            }
+        }  else {
+        }
+        // match load(redis_pool.get().unwrap(), "cache_tx_6a6551842224af1a4572d43bbf94e39cff53fb4c8698f1888d77b9d80f034d16".to_string()) {
+        //     Ok(val) => {
+        //         // let tx = serde_json::from_str(val.as_str()).unwrap();
+        //         zadd(redis_pool.get().unwrap(), "z_set".to_string(), val, timestamp());
+        //     },
+        //     Err(e) => {}
+        // }
+    }
+
+    fn timestamp() -> u64 {
+        let start = SystemTime::now();
+        let since_the_epoch = start
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+        let ms = since_the_epoch.as_secs() as u64 * 1000u64 + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as u64;
+        ms
     }
 }
