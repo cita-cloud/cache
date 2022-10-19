@@ -36,16 +36,17 @@ use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
     receipt, system_config, tx, version,
 };
-use rest_api::post::{create, generate_account};
+use rest_api::post::{create, generate_account, send_tx};
 use rocket::{routes, Build, Rocket};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+use crate::core::crypto::CryptoClient;
 
 #[macro_use]
 extern crate rocket;
 
 fn rocket() -> Rocket<Build> {
-    let ctx: Context<ControllerClient, ExecutorClient, EvmClient> = Context::new();
+    let ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient> = Context::new();
 
     rocket::build()
         .mount(
@@ -70,6 +71,7 @@ fn rocket() -> Rocket<Build> {
                 version,
                 create,
                 generate_account,
+                send_tx,
             ],
         )
         .register("/", catchers![uri_not_found])

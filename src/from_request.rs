@@ -24,7 +24,7 @@ use crate::core::evm::EvmBehaviour;
 use crate::display::Display;
 use crate::error::CacheError;
 use crate::redis::{hget, load, set};
-use crate::{ControllerClient, EvmClient, ExecutorClient};
+use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use rocket::http::Method::Get;
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome};
@@ -69,7 +69,7 @@ fn query_error(path: &str, detail: anyhow::Error) -> CacheError {
 }
 
 async fn save_and_get(
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient>>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     path: &str,
     param: &str,
     key: String,
@@ -212,18 +212,19 @@ async fn save_and_get(
 }
 
 #[rocket::async_trait]
-impl<'r> FromRequest<'r> for Context<ControllerClient, ExecutorClient, EvmClient> {
+impl<'r> FromRequest<'r> for Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient> {
     type Error = ();
 
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         let ctx = req
-            .guard::<&State<Context<ControllerClient, ExecutorClient, EvmClient>>>()
+            .guard::<&State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>>()
             .await
             .unwrap();
         Outcome::Success(Context {
             controller: ctx.controller.clone(),
             executor: ctx.executor.clone(),
             evm: ctx.evm.clone(),
+            crypto: ctx.crypto.clone(),
             redis_pool: ctx.redis_pool.clone(),
         })
     }
@@ -243,7 +244,7 @@ impl<'r> FromRequest<'r> for CacheResult<Value, CacheError> {
         }
 
         let ctx = req
-            .guard::<&State<Context<ControllerClient, ExecutorClient, EvmClient>>>()
+            .guard::<&State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>>()
             .await
             .unwrap();
         let pattern = &get_param(req, 0)["get-".len()..];
@@ -296,7 +297,7 @@ impl<'r> FromRequest<'r> for CacheResult<MaybeLocked, CacheError> {
             None => return Outcome::Success(CacheResult::Err(CacheError::AccountIsNone)),
         };
         let ctx = req
-            .guard::<&State<Context<ControllerClient, ExecutorClient, EvmClient>>>()
+            .guard::<&State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>>()
             .await
             .unwrap();
         match hget(ctx.get_redis_connection(), hkey(), address.to_string()) {

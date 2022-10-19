@@ -11,10 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use crate::constant::{ACCOUNTS_KEY_PREFIX, KEY_PREFIX};
+use crate::constant::{ACCOUNTS_KEY_PREFIX, KEY_PREFIX, TX_POOL};
 use crate::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
 use std::num::ParseIntError;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn remove_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
@@ -97,4 +98,17 @@ pub fn key_without_param(key_type: &str) -> String {
 
 pub fn hkey() -> String {
     format!("{}_{}", KEY_PREFIX, ACCOUNTS_KEY_PREFIX)
+}
+
+pub fn zadd_key() -> String {
+    format!("{}_{}", KEY_PREFIX, TX_POOL)
+}
+
+pub fn timestamp() -> u64 {
+    let start = SystemTime::now();
+    let since_the_epoch = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards");
+    let ms = since_the_epoch.as_secs() as u64 * 1000u64 + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as u64;
+    ms
 }

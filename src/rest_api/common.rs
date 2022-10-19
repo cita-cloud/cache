@@ -61,6 +61,14 @@ pub fn fail<T>(e: CacheError) -> Json<QueryResult<T>> {
     })
 }
 
+pub fn fail_result<T>() -> Json<QueryResult<T>> {
+    Json(QueryResult {
+        status: FAILURE,
+        data: None,
+        message: format!(""),
+    })
+}
+
 #[derive(OpenApi)]
 #[openapi(
 handlers(
@@ -79,7 +87,8 @@ block_hash,
 version,
 create,
 generate_account,
+send_tx,
 ),
-components(SuccessResult, FailureResult, CreateContract<'_>, GenerateAccount, CryptoType)
+components(SuccessResult, FailureResult, CreateContract<'_>, GenerateAccount, CryptoType, SendTx<'_>)
 )]
 pub struct ApiDoc;

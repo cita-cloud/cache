@@ -16,3 +16,4 @@ pub mod account;
 pub mod controller;
 pub mod evm;
 pub mod executor;
+pub mod crypto;

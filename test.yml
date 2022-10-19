@@ -1,0 +1,413 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+data:
+  redis-config: |
+    bind 0.0.0.0
+    dir /data
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    requirepass rivtower
+---
+apiVersion: v1
+kind: ConfigMap
+binaryData:
+  private_key: ZWU3MDk5NmM3M2VhNzg4OTQzNDUxY2JmZmQ3MTE2Y2EyYWY1ODU5ZWFjNjkyMjgxMDUwMTBhZmMxN2E0M2JlZAo=
+data:
+  address: ed12000856d539369d01ffe7fc6ba2e74d6edc5f
+metadata:
+  labels:
+    app.kubernetes.io/chain-name: new-cache-chain
+    app.kubernetes.io/chain-node: new-cache-chain-node0
+  name: new-cache-chain-node0-account
+---
+apiVersion: v1
+kind: ConfigMap
+data:
+  config.toml: "[network_p2p]\ngrpc_port = 50000\nport = 40000\n\n[[network_p2p.peers]]\naddress = '/dns4/new-raft-chain-node0-nodeport/tcp/40000'\n\n[consensus_raft]\ncontroller_port = 50004\ngrpc_listen_port = 50001\nnetwork_port = 50000\nnode_addr = 'ed12000856d539369d01ffe7fc6ba2e74d6edc5f'\n\n[executor_evm]\nexecutor_port = 50002\n\n[storage_rocksdb]\ncrypto_port = 50005\nstorage_port = 50003\n\n[genesis_block]\nprevhash = '0x0000000000000000000000000000000000000000000000000000000000000000'\ntimestamp = 1661159376223\n\n[system_config]\nadmin = '0a385280b399ccb341c566ee78fa0b82d29093dd'\nblock_interval = 3\nblock_limit = 100\nchain_id = '1cf680c622e808c9eb1f3dbeca3a8da5fe8d7ead0c32652bc6b9668fbbb62d32'\nvalidators = [\n       'ed12000856d539369d01ffe7fc6ba2e74d6edc5f',\n]\nversion = 0\n\n[controller]\nconsensus_port = 50001\ncontroller_port = 50004\ncrypto_port = 50005\nexecutor_port = 50002\nnetwork_port = 50000\nnode_address = 'ed12000856d539369d01ffe7fc6ba2e74d6edc5f'\nquota_limit = 30000000\nstorage_port = 50003\nvalidator_address_len = 20\n\n[crypto_sm]\ncrypto_port = 50005\n\n"
+metadata:
+  labels:
+    app.kubernetes.io/chain-name: new-cache-chain
+    app.kubernetes.io/chain-node: new-cache-chain-node0
+  name: new-cache-chain-node0-config
+---
+
+apiVersion: v1
+kind: ConfigMap
+data:
+  consensus-log4rs.yaml: "# Scan this file for changes every 30 seconds\nrefresh_rate: 30 seconds\n\nappenders:\n# An appender named \"stdout\" that writes to stdout\n  stdout:\n    kind: console\n\n  journey-service:\n    kind: rolling_file\n    path: \"logs/consensus-service.log\"\n    policy:\n      # Identifies which policy is to be used. If no kind is specified, it will\n      # default to \"compound\".\n      kind: compound\n      # The remainder of the configuration is passed along to the policy's\n      # deserializer, and will vary based on the kind of policy.\n      trigger:\n        kind: size\n        limit: 50mb\n      roller:\n        kind: fixed_window\n        base: 1\n        count: 5\n        pattern: \"logs/consensus-service.{}.gz\"\n\n# Set the default logging level and attach the default appender to the root\nroot:\n  level: info\n  appenders:\n    - stdout\n    - journey-service\n"
+  controller-log4rs.yaml: "# Scan this file for changes every 30 seconds\nrefresh_rate: 30 seconds\n\nappenders:\n# An appender named \"stdout\" that writes to stdout\n  stdout:\n    kind: console\n\n  journey-service:\n    kind: rolling_file\n    path: \"logs/controller-service.log\"\n    policy:\n      # Identifies which policy is to be used. If no kind is specified, it will\n      # default to \"compound\".\n      kind: compound\n      # The remainder of the configuration is passed along to the policy's\n      # deserializer, and will vary based on the kind of policy.\n      trigger:\n        kind: size\n        limit: 50mb\n      roller:\n        kind: fixed_window\n        base: 1\n        count: 5\n        pattern: \"logs/controller-service.{}.gz\"\n\n# Set the default logging level and attach the default appender to the root\nroot:\n  level: info\n  appenders:\n    - stdout\n    - journey-service\n"
+  crypto-log4rs.yaml: "# Scan this file for changes every 30 seconds\nrefresh_rate: 30 seconds\n\nappenders:\n# An appender named \"stdout\" that writes to stdout\n  stdout:\n    kind: console\n\n  journey-service:\n    kind: rolling_file\n    path: \"logs/crypto-service.log\"\n    policy:\n      # Identifies which policy is to be used. If no kind is specified, it will\n      # default to \"compound\".\n      kind: compound\n      # The remainder of the configuration is passed along to the policy's\n      # deserializer, and will vary based on the kind of policy.\n      trigger:\n        kind: size\n        limit: 50mb\n      roller:\n        kind: fixed_window\n        base: 1\n        count: 5\n        pattern: \"logs/crypto-service.{}.gz\"\n\n# Set the default logging level and attach the default appender to the root\nroot:\n  level: info\n  appenders:\n    - stdout\n    - journey-service\n"
+  executor-log4rs.yaml: "# Scan this file for changes every 30 seconds\nrefresh_rate: 30 seconds\n\nappenders:\n# An appender named \"stdout\" that writes to stdout\n  stdout:\n    kind: console\n\n  journey-service:\n    kind: rolling_file\n    path: \"logs/executor-service.log\"\n    policy:\n      # Identifies which policy is to be used. If no kind is specified, it will\n      # default to \"compound\".\n      kind: compound\n      # The remainder of the configuration is passed along to the policy's\n      # deserializer, and will vary based on the kind of policy.\n      trigger:\n        kind: size\n        limit: 50mb\n      roller:\n        kind: fixed_window\n        base: 1\n        count: 5\n        pattern: \"logs/executor-service.{}.gz\"\n\n# Set the default logging level and attach the default appender to the root\nroot:\n  level: info\n  appenders:\n    - stdout\n    - journey-service\n"
+  network-log4rs.yaml: "# Scan this file for changes every 30 seconds\nrefresh_rate: 30 seconds\n\nappenders:\n# An appender named \"stdout\" that writes to stdout\n  stdout:\n    kind: console\n\n  journey-service:\n    kind: rolling_file\n    path: \"logs/network-service.log\"\n    policy:\n      # Identifies which policy is to be used. If no kind is specified, it will\n      # default to \"compound\".\n      kind: compound\n      # The remainder of the configuration is passed along to the policy's\n      # deserializer, and will vary based on the kind of policy.\n      trigger:\n        kind: size\n        limit: 50mb\n      roller:\n        kind: fixed_window\n        base: 1\n        count: 5\n        pattern: \"logs/network-service.{}.gz\"\n\n# Set the default logging level and attach the default appender to the root\nroot:\n  level: info\n  appenders:\n    - stdout\n    - journey-service\n"
+  storage-log4rs.yaml: "# Scan this file for changes every 30 seconds\nrefresh_rate: 30 seconds\n\nappenders:\n# An appender named \"stdout\" that writes to stdout\n  stdout:\n    kind: console\n\n  journey-service:\n    kind: rolling_file\n    path: \"logs/storage-service.log\"\n    policy:\n      # Identifies which policy is to be used. If no kind is specified, it will\n      # default to \"compound\".\n      kind: compound\n      # The remainder of the configuration is passed along to the policy's\n      # deserializer, and will vary based on the kind of policy.\n      trigger:\n        kind: size\n        limit: 50mb\n      roller:\n        kind: fixed_window\n        base: 1\n        count: 5\n        pattern: \"logs/storage-service.{}.gz\"\n\n# Set the default logging level and attach the default appender to the root\nroot:\n  level: info\n  appenders:\n    - stdout\n    - journey-service\n"
+metadata:
+  labels:
+    app.kubernetes.io/chain-name: new-cache-chain
+    app.kubernetes.io/chain-node: new-cache-chain-node0
+  name: new-cache-chain-node0-log
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/chain-name: new-cache-chain
+    app.kubernetes.io/chain-node: new-cache-chain-node0
+  name: new-cache-chain-node0-nodeport
+spec:
+  ports:
+    - name: network
+      port: 40000
+      protocol: TCP
+      targetPort: 40000
+    - name: rpc
+      port: 50004
+      protocol: TCP
+      targetPort: 50004
+    - name: call
+      port: 50002
+      protocol: TCP
+      targetPort: 50002
+    - name: cache
+      port: 8000
+      protocol: TCP
+      targetPort: 8000
+  selector:
+    app.kubernetes.io/chain-name: new-cache-chain
+    app.kubernetes.io/chain-node: new-cache-chain-node0
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app.kubernetes.io/chain-name: new-cache-chain
+    app.kubernetes.io/chain-node: new-cache-chain-node0
+  name: new-cache-chain-node0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/chain-name: new-cache-chain
+      app.kubernetes.io/chain-node: new-cache-chain-node0
+  serviceName: ""
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/chain-name: new-cache-chain
+        app.kubernetes.io/chain-node: new-cache-chain-node0
+    spec:
+      containers:
+        - command:
+            - network
+            - run
+            - "-c"
+            - /etc/cita-cloud/config/config.toml
+            - "-l"
+            - /etc/cita-cloud/log/network-log4rs.yaml
+          image: "docker.io/citacloud/network_p2p:v6.5.0"
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command:
+                - grpc_health_probe
+                - "-addr=127.0.0.1:50000"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          name: network
+          ports:
+            - containerPort: 40000
+              name: network
+              protocol: TCP
+            - containerPort: 50000
+              name: grpc
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 4000m
+              memory: 8192Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - mountPath: /data
+              name: datadir
+            - mountPath: /etc/cita-cloud/config
+              name: node-config
+            - mountPath: /etc/cita-cloud/log
+              name: node-log
+          workingDir: /data
+        - command:
+            - consensus
+            - run
+            - "-c"
+            - /etc/cita-cloud/config/config.toml
+            - "--stdout"
+          image: "docker.io/citacloud/consensus_raft:v6.5.0"
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command:
+                - grpc_health_probe
+                - "-addr=127.0.0.1:50001"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          name: consensus
+          ports:
+            - containerPort: 50001
+              name: grpc
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 4000m
+              memory: 8192Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - mountPath: /data
+              name: datadir
+            - mountPath: /etc/cita-cloud/config
+              name: node-config
+            - mountPath: /etc/cita-cloud/log
+              name: node-log
+            - mountPath: /mnt
+              name: node-account
+          workingDir: /data
+        - command:
+            - executor
+            - run
+            - "-c"
+            - /etc/cita-cloud/config/config.toml
+            - "-l"
+            - /etc/cita-cloud/log/executor-log4rs.yaml
+          image: "docker.io/citacloud/executor_evm:v6.5.0"
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command:
+                - grpc_health_probe
+                - "-addr=127.0.0.1:50002"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          name: executor
+          ports:
+            - containerPort: 50002
+              name: grpc
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 4000m
+              memory: 8192Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - mountPath: /data
+              name: datadir
+            - mountPath: /etc/cita-cloud/config
+              name: node-config
+            - mountPath: /etc/cita-cloud/log
+              name: node-log
+          workingDir: /data
+        - command:
+            - storage
+            - run
+            - "-c"
+            - /etc/cita-cloud/config/config.toml
+            - "-l"
+            - /etc/cita-cloud/log/storage-log4rs.yaml
+          image: "docker.io/citacloud/storage_rocksdb:v6.5.0"
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command:
+                - grpc_health_probe
+                - "-addr=127.0.0.1:50003"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          name: storage
+          ports:
+            - containerPort: 50003
+              name: grpc
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 4000m
+              memory: 8192Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - mountPath: /data
+              name: datadir
+            - mountPath: /etc/cita-cloud/config
+              name: node-config
+            - mountPath: /etc/cita-cloud/log
+              name: node-log
+          workingDir: /data
+        - command:
+            - controller
+            - run
+            - "-c"
+            - /etc/cita-cloud/config/config.toml
+            - "-l"
+            - /etc/cita-cloud/log/controller-log4rs.yaml
+          image: "docker.io/citacloud/controller:v6.5.0"
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command:
+                - grpc_health_probe
+                - "-addr=127.0.0.1:50004"
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          name: controller
+          ports:
+            - containerPort: 50004
+              name: grpc
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 4000m
+              memory: 8192Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - mountPath: /data
+              name: datadir
+            - mountPath: /etc/cita-cloud/config
+              name: node-config
+            - mountPath: /etc/cita-cloud/log
+              name: node-log
+          workingDir: /data
+        - command:
+            - /bin/sh
+            - "-c"
+            - "if [ ! -f \"/data/private_key\" ]; then cp /mnt/private_key /data;fi; crypto run -c /etc/cita-cloud/config/config.toml -l /etc/cita-cloud/log/crypto-log4rs.yaml"
+          image: "docker.io/citacloud/crypto_sm:v6.5.0"
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command:
+                - grpc_health_probe
+                - "-addr=127.0.0.1:50005"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          name: crypto
+          ports:
+            - containerPort: 50005
+              name: grpc
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 4000m
+              memory: 8192Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - mountPath: /data
+              name: datadir
+            - mountPath: /etc/cita-cloud/config
+              name: node-config
+            - mountPath: /etc/cita-cloud/log
+              name: node-log
+            - mountPath: /mnt
+              name: node-account
+          workingDir: /data
+        - image: "praqma/network-multitool:latest"
+          imagePullPolicy: IfNotPresent
+          name: debug
+          ports:
+            - containerPort: 9999
+              name: debug
+              protocol: TCP
+          volumeMounts:
+            - mountPath: /data
+              name: datadir
+            - mountPath: /etc/cita-cloud/config
+              name: node-config
+            - mountPath: /etc/cita-cloud/log
+              name: node-log
+            - mountPath: /mnt
+              name: node-account
+          workingDir: /data
+        - command:
+            - redis-server
+            - "/redis-config/redis.conf"
+          name: redis
+          image: redis
+          ports:
+            - containerPort: 6379
+          resources:
+            limits:
+              cpu: "0.1"
+          volumeMounts:
+            - mountPath: /data
+              name: datadir
+            - mountPath: /redis-config
+              name: config
+          workingDir: /data
+        - command:
+            - cache
+          name: cache
+          image: "docker.io/citacloud/cache:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: cache
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 4000m
+              memory: 8192Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          workingDir: /data
+      volumes:
+        - configMap:
+            name: new-cache-chain-node0-account
+          name: node-account
+        - configMap:
+            name: new-cache-chain-node0-config
+          name: node-config
+        - configMap:
+            name: new-cache-chain-node0-log
+          name: node-log
+        - name: config
+          configMap:
+            name: redis-config
+            items:
+              - key: redis-config
+                path: redis.conf
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: datadir
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+        storageClassName: nas-client-provisioner
+
+
+  curl -X 'POST' \
+  'http://127.0.0.1:8000/api/create' \
+-H 'accept: */*' \
+-H 'account: 0xdabbe23ce2981892276db49d5ea8f9202abab22c' \
+-H 'Content-Type: application/json' \
+  -d '{
+"data": "",
+"quota": 1073741824,
+"valid_until_block": 95,
+"value": "0x0"
+}'

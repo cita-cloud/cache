@@ -82,7 +82,7 @@ pub fn zadd<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     zkey: String,
     member: T,
     score: u64
-) -> Result<String, r2d2_redis::redis::RedisError> {
+) -> Result<u64, r2d2_redis::redis::RedisError> {
     con.zadd(zkey, member, score)
 }
 

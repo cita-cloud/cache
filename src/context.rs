@@ -15,6 +15,7 @@
 use crate::core::controller::ControllerBehaviour;
 use crate::core::evm::EvmBehaviour;
 use crate::core::executor::ExecutorBehaviour;
+use crate::core::crypto::CryptoBehaviour;
 use crate::pool;
 use crate::redis::Pool;
 use cita_cloud_proto::client::ClientOptions;
@@ -23,20 +24,22 @@ use tokio::sync::OnceCell;
 
 pub const CLIENT_NAME: &str = "cache";
 
-pub struct Context<Co, Ex, Ev> {
+pub struct Context<Co, Ex, Ev, Cr> {
     /// Those gRPC client are connected lazily.
     pub controller: Co,
     pub executor: Ex,
     pub evm: Ev,
+    pub crypto: Cr,
     pub redis_pool: Pool,
 }
 
-impl<Co, Ex, Ev> Context<Co, Ex, Ev> {
+impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
     pub fn new() -> Self
     where
         Co: ControllerBehaviour + Clone,
         Ex: ExecutorBehaviour + Clone,
         Ev: EvmBehaviour + Clone,
+        Cr: CryptoBehaviour + Clone,
     {
         let controller_client = OnceCell::new_with(Some({
             let client_options = ClientOptions::new(
@@ -70,14 +73,28 @@ impl<Co, Ex, Ev> Context<Co, Ex, Ev> {
             }
         }));
 
-        let controller = Co::connect(controller_client);
+        let crypto_client = OnceCell::new_with(Some({
+            let client_options = ClientOptions::new(
+                CLIENT_NAME.to_string(),
+                format!("http://127.0.0.1:{}", 50005),
+            );
+            match client_options.connect_crypto() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
+        }));
+
+        let redis_pool = pool();
+
+        let controller = Co::connect(controller_client, redis_pool.clone());
         let executor = Ex::connect(executor_client);
         let evm = Ev::connect(evm_client);
-        let redis_pool = pool();
+        let crypto = Cr::connect(crypto_client);
         Self {
             controller,
             executor,
             evm,
+            crypto,
             redis_pool,
         }
     }
