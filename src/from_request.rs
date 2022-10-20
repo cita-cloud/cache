@@ -76,35 +76,35 @@ async fn save_and_get(
 ) -> Result<Value, CacheError> {
     match path {
         "block-number" => match ctx.controller.get_block_number(false).await {
-            Ok(block_number) => match set(ctx.get_redis_connection(), key, block_number) {
+            Ok(block_number) => match set(key, block_number) {
                 Ok(_) => Ok(json!(block_number)),
                 Err(e) => Err(CacheError::Operate(e)),
             },
             Err(detail) => Err(query_error(path, detail)),
         },
         "peers-count" => match ctx.controller.get_peer_count().await {
-            Ok(peer_count) => match set(ctx.get_redis_connection(), key, peer_count) {
+            Ok(peer_count) => match set(key, peer_count) {
                 Ok(_) => Ok(json!(peer_count)),
                 Err(e) => Err(CacheError::Operate(e)),
             },
             Err(detail) => Err(query_error(path, detail)),
         },
         "version" => match ctx.controller.get_version().await {
-            Ok(version) => match set(ctx.get_redis_connection(), key, version.clone()) {
+            Ok(version) => match set(key, version.clone()) {
                 Ok(_) => Ok(json!(version)),
                 Err(e) => Err(CacheError::Operate(e)),
             },
             Err(detail) => Err(query_error(path, detail)),
         },
         "peers-info" => match ctx.controller.get_peers_info().await {
-            Ok(info) => match set(ctx.get_redis_connection(), key, info.display()) {
+            Ok(info) => match set(key, info.display()) {
                 Ok(_) => Ok(info.to_json()),
                 Err(e) => Err(CacheError::Operate(e)),
             },
             Err(detail) => Err(query_error(path, detail)),
         },
         "system-config" => match ctx.controller.get_system_config().await {
-            Ok(config) => match set(ctx.get_redis_connection(), key, config.display()) {
+            Ok(config) => match set(key, config.display()) {
                 Ok(_) => Ok(config.to_json()),
                 Err(e) => Err(CacheError::Operate(e)),
             },
@@ -112,7 +112,7 @@ async fn save_and_get(
         },
         "abi" => match parse_addr(param) {
             Ok(data) => match ctx.evm.get_abi(data).await {
-                Ok(abi) => match set(ctx.get_redis_connection(), key, abi.display()) {
+                Ok(abi) => match set(key, abi.display()) {
                     Ok(_) => Ok(json!(abi.display())),
                     Err(e) => Err(CacheError::Operate(e)),
                 },
@@ -122,7 +122,7 @@ async fn save_and_get(
         },
         "account-nonce" => match parse_addr(param) {
             Ok(data) => match ctx.evm.get_tx_count(data).await {
-                Ok(nonce) => match set(ctx.get_redis_connection(), key, nonce.display()) {
+                Ok(nonce) => match set(key, nonce.display()) {
                     Ok(_) => Ok(json!(nonce.display())),
                     Err(e) => Err(CacheError::Operate(e)),
                 },
@@ -132,7 +132,7 @@ async fn save_and_get(
         },
         "balance" => match parse_addr(param) {
             Ok(data) => match ctx.evm.get_balance(data).await {
-                Ok(balance) => match set(ctx.get_redis_connection(), key, balance.display()) {
+                Ok(balance) => match set(key, balance.display()) {
                     Ok(_) => Ok(json!(balance.display())),
                     Err(e) => Err(CacheError::Operate(e)),
                 },
@@ -142,7 +142,7 @@ async fn save_and_get(
         },
         "code" => match parse_addr(param) {
             Ok(data) => match ctx.evm.get_code(data).await {
-                Ok(code) => match set(ctx.get_redis_connection(), key, code.display()) {
+                Ok(code) => match set(key, code.display()) {
                     Ok(_) => Ok(json!(code.display())),
                     Err(e) => Err(CacheError::Operate(e)),
                 },
@@ -152,7 +152,7 @@ async fn save_and_get(
         },
         "block-hash" => match parse_u64(param) {
             Ok(data) => match ctx.controller.get_block_hash(data).await {
-                Ok(hash) => match set(ctx.get_redis_connection(), key, hash.display()) {
+                Ok(hash) => match set(key, hash.display()) {
                     Ok(_) => Ok(json!(hash.display())),
                     Err(e) => Err(CacheError::Operate(e)),
                 },
@@ -163,7 +163,7 @@ async fn save_and_get(
         "receipt" => {
             if let Ok(data) = parse_hash(param) {
                 match ctx.evm.get_receipt(data).await {
-                    Ok(receipt) => match set(ctx.get_redis_connection(), key, receipt.display()) {
+                    Ok(receipt) => match set(key, receipt.display()) {
                         Ok(_) => Ok(receipt.to_json()),
                         Err(e) => Err(CacheError::Operate(e)),
                     },
@@ -176,7 +176,7 @@ async fn save_and_get(
         "tx" => {
             if let Ok(data) = parse_hash(param) {
                 match ctx.controller.get_tx(data).await {
-                    Ok(tx) => match set(ctx.get_redis_connection(), key, tx.display()) {
+                    Ok(tx) => match set(key, tx.display()) {
                         Ok(_) => Ok(tx.to_json()),
                         Err(e) => Err(CacheError::Operate(e)),
                     },
@@ -189,7 +189,7 @@ async fn save_and_get(
         "block" => {
             if let Ok(data) = parse_u64(param) {
                 match ctx.controller.get_block_by_number(data).await {
-                    Ok(block) => match set(ctx.get_redis_connection(), key, block.display()) {
+                    Ok(block) => match set(key, block.display()) {
                         Ok(_) => Ok(block.to_json()),
                         Err(e) => Err(CacheError::Operate(e)),
                     },
@@ -197,7 +197,7 @@ async fn save_and_get(
                 }
             } else if let Ok(data) = parse_hash(param) {
                 match ctx.controller.get_block_by_hash(data).await {
-                    Ok(block) => match set(ctx.get_redis_connection(), key, block.display()) {
+                    Ok(block) => match set(key, block.display()) {
                         Ok(_) => Ok(block.to_json()),
                         Err(e) => Err(CacheError::Operate(e)),
                     },
@@ -258,7 +258,7 @@ impl<'r> FromRequest<'r> for CacheResult<Value, CacheError> {
         } else {
             key(pattern, param)
         };
-        match load(ctx.get_redis_connection(), key.clone()) {
+        match load(key.clone()) {
             Ok(val) => {
                 if val == String::default() {
                     match save_and_get(ctx, pattern, param, key.clone()).await {
@@ -296,11 +296,7 @@ impl<'r> FromRequest<'r> for CacheResult<MaybeLocked, CacheError> {
             }
             None => return Outcome::Success(CacheResult::Err(CacheError::AccountIsNone)),
         };
-        let ctx = req
-            .guard::<&State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>>()
-            .await
-            .unwrap();
-        match hget(ctx.get_redis_connection(), hkey(), address.to_string()) {
+        match hget(hkey(), address.to_string()) {
             Ok(data) => match toml::from_str(data.as_str()) {
                 Ok(account) => Outcome::Success(CacheResult::Ok(account)),
                 Err(e) => Outcome::Success(CacheResult::Err(CacheError::TomlDe(e))),

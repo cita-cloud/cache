@@ -20,6 +20,8 @@ use anyhow::Result;
 use prost::Message;
 
 use crate::crypto::{ArrayLike, Hash};
+use crate::redis::{hset, zadd};
+use crate::util::{hash_tx_key, hex_without_0x, timestamp, tx_pool_key};
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -32,21 +34,15 @@ use cita_cloud_proto::{
     controller::rpc_service_client::RpcServiceClient,
     controller::{BlockNumber, Flag, SystemConfig},
 };
-use env_logger::Target::Stderr;
 use tokio::sync::OnceCell;
-use tonic::codegen::StdError;
-use crate::redis::{Pool, zadd};
-use crate::util::{hex_without_0x, timestamp, zadd_key};
 
 #[derive(Debug, Clone)]
 pub struct ControllerClient {
     retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>,
-    pool: Pool,
 }
 #[tonic::async_trait]
 pub trait ControllerBehaviour {
-    // TODO: should I use the protobuf type instead of concrete type? e.g. u64 -> BlockNumber
-    fn connect(retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>, pool: Pool) -> Self;
+    fn connect(retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>) -> Self;
 
     async fn send_raw(&self, raw: RawTransaction) -> Result<Hash>;
 
@@ -74,25 +70,16 @@ pub trait ControllerBehaviour {
 
 #[tonic::async_trait]
 impl ControllerBehaviour for ControllerClient {
-    fn connect(retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>, pool: Pool) -> Self {
-        Self { retry_client, pool }
+    fn connect(retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>) -> Self {
+        Self { retry_client }
     }
 
     async fn send_raw(&self, raw: RawTransaction) -> Result<Hash> {
-        let mut buf = vec![];
-        raw.encode(&mut buf).unwrap();
-        zadd(self.pool.get().unwrap(), zadd_key(), hex_without_0x(&buf[..]), timestamp())?;
-        match raw.tx {
-            Some(Tx::NormalTx(ref normal_tx)) => Hash::try_from_slice(&normal_tx.transaction_hash),
-            Some(Tx::UtxoTx(ref utxo_tx)) => Hash::try_from_slice(&utxo_tx.transaction_hash),
-            None => Hash::try_from_slice(Vec::new().as_slice())
-                .context("hash not exist"),
-        }
-        // let client = self.retry_client.get().unwrap();
-        // let resp = client.send_raw_transaction(raw).await?;
-        //
-        // Hash::try_from_slice(&utxo_tx.transaction_hash)
-        //     .context("controller returns an invalid transaction hash, maybe we are using a wrong signing algorithm?")
+        let client = self.retry_client.get().unwrap();
+        let resp = client.send_raw_transaction(raw).await?;
+
+        Hash::try_from_slice(&resp.hash)
+            .context("controller returns an invalid transaction hash, maybe we are using a wrong signing algorithm?")
     }
 
     async fn get_version(&self) -> Result<String> {
@@ -350,8 +337,25 @@ where
     where
         S: SignerBehaviour + Send + Sync,
     {
+        let mut buf = vec![];
+        let timestamp = timestamp();
+        let empty = Vec::new();
         let raw = signer.sign_raw_tx(raw_tx);
-        self.send_raw(raw).await.context("failed to send raw")
+        raw.encode(&mut buf).unwrap();
+
+        let hash = match raw.tx {
+            Some(Tx::NormalTx(ref normal_tx)) => &normal_tx.transaction_hash,
+            Some(Tx::UtxoTx(ref utxo_tx)) => &utxo_tx.transaction_hash,
+            None => empty.as_slice(),
+        };
+        let hash_str = hex_without_0x(hash);
+
+        let tx_str = hex_without_0x(&buf[..]);
+        zadd(tx_pool_key(), tx_str.clone(), timestamp)?;
+        hset(hash_tx_key(), hash_str, tx_str)?;
+
+        Ok(Hash::try_from_slice(hash).unwrap())
+        // self.send_raw(raw).await.context("failed to send raw")
     }
 
     async fn send_raw_utxo<S>(&self, signer: &S, raw_utxo: CloudUtxoTransaction) -> Result<Hash>

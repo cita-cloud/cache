@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use crate::constant::{ACCOUNTS_KEY_PREFIX, KEY_PREFIX, TX_POOL};
+use crate::constant::{ACCOUNTS_KEY_PREFIX, HASH_TX_MAPPING, KEY_PREFIX, TX_HASH, TX_POOL};
 use crate::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
 use std::num::ParseIntError;
@@ -56,7 +56,7 @@ pub fn hex(data: &[u8]) -> String {
 }
 
 pub fn hex_without_0x(data: &[u8]) -> String {
-    format!("{}", hex::encode(data))
+    hex::encode(data)
 }
 
 pub fn parse_pk<C: Crypto>(s: &str) -> Result<C::PublicKey> {
@@ -100,7 +100,15 @@ pub fn hkey() -> String {
     format!("{}_{}", KEY_PREFIX, ACCOUNTS_KEY_PREFIX)
 }
 
-pub fn zadd_key() -> String {
+pub fn hash_tx_key() -> String {
+    format!("{}_{}", KEY_PREFIX, HASH_TX_MAPPING)
+}
+
+pub fn tx_hash_key() -> String {
+    format!("{}_{}", KEY_PREFIX, TX_HASH)
+}
+
+pub fn tx_pool_key() -> String {
     format!("{}_{}", KEY_PREFIX, TX_POOL)
 }
 
@@ -109,6 +117,6 @@ pub fn timestamp() -> u64 {
     let since_the_epoch = start
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards");
-    let ms = since_the_epoch.as_secs() as u64 * 1000u64 + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as u64;
-    ms
+    since_the_epoch.as_secs() as u64 * 1000u64
+        + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as u64
 }

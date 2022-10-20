@@ -17,4 +17,6 @@ pub const FAILURE: u64 = 0;
 pub const SUCCESS_MESSAGE: &str = "success";
 pub const KEY_PREFIX: &str = "cache";
 pub const ACCOUNTS_KEY_PREFIX: &str = "accounts";
+pub const HASH_TX_MAPPING: &str = "hash_tx";
+pub const TX_HASH: &str = "tx_hash";
 pub const TX_POOL: &str = "tx_pool";

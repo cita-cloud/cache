@@ -422,6 +422,7 @@ impl MaybeLocked {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_locked(&self) -> bool {
         match self {
             Self::Unlocked(..) => false,
@@ -437,6 +438,7 @@ impl MaybeLocked {
         }
     }
 
+    #[allow(dead_code)]
     pub fn unlock(&self, pw: &[u8]) -> Result<MultiCryptoAccount> {
         // manually clone here to avoid impl Clone for sensitive data
         fn cloned<C: Crypto>(ac: &Account<C>) -> Account<C> {

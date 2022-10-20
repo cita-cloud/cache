@@ -61,14 +61,6 @@ pub fn fail<T>(e: CacheError) -> Json<QueryResult<T>> {
     })
 }
 
-pub fn fail_result<T>() -> Json<QueryResult<T>> {
-    Json(QueryResult {
-        status: FAILURE,
-        data: None,
-        message: format!(""),
-    })
-}
-
 #[derive(OpenApi)]
 #[openapi(
 handlers(

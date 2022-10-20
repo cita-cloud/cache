@@ -13,13 +13,12 @@
 // limitations under the License.
 
 use crate::core::controller::ControllerBehaviour;
+use crate::core::crypto::CryptoBehaviour;
 use crate::core::evm::EvmBehaviour;
 use crate::core::executor::ExecutorBehaviour;
-use crate::core::crypto::CryptoBehaviour;
 use crate::pool;
 use crate::redis::Pool;
 use cita_cloud_proto::client::ClientOptions;
-use r2d2_redis::RedisConnectionManager;
 use tokio::sync::OnceCell;
 
 pub const CLIENT_NAME: &str = "cache";
@@ -34,7 +33,12 @@ pub struct Context<Co, Ex, Ev, Cr> {
 }
 
 impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
-    pub fn new() -> Self
+    pub fn new(
+        controller_addr: String,
+        executor_addr: String,
+        crypto_addr: String,
+        redis_addr: String,
+    ) -> Self
     where
         Co: ControllerBehaviour + Clone,
         Ex: ExecutorBehaviour + Clone,
@@ -42,20 +46,14 @@ impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
         Cr: CryptoBehaviour + Clone,
     {
         let controller_client = OnceCell::new_with(Some({
-            let client_options = ClientOptions::new(
-                CLIENT_NAME.to_string(),
-                format!("http://127.0.0.1:{}", 50004),
-            );
+            let client_options = ClientOptions::new(CLIENT_NAME.to_string(), controller_addr);
             match client_options.connect_rpc() {
                 Ok(retry_client) => retry_client,
                 Err(e) => panic!("client init error: {:?}", &e),
             }
         }));
         let executor_client = OnceCell::new_with(Some({
-            let client_options = ClientOptions::new(
-                CLIENT_NAME.to_string(),
-                format!("http://127.0.0.1:{}", 50002),
-            );
+            let client_options = ClientOptions::new(CLIENT_NAME.to_string(), executor_addr.clone());
             match client_options.connect_executor() {
                 Ok(retry_client) => retry_client,
                 Err(e) => panic!("client init error: {:?}", &e),
@@ -63,10 +61,7 @@ impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
         }));
 
         let evm_client = OnceCell::new_with(Some({
-            let client_options = ClientOptions::new(
-                CLIENT_NAME.to_string(),
-                format!("http://127.0.0.1:{}", 50002),
-            );
+            let client_options = ClientOptions::new(CLIENT_NAME.to_string(), executor_addr);
             match client_options.connect_evm() {
                 Ok(retry_client) => retry_client,
                 Err(e) => panic!("client init error: {:?}", &e),
@@ -74,19 +69,15 @@ impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
         }));
 
         let crypto_client = OnceCell::new_with(Some({
-            let client_options = ClientOptions::new(
-                CLIENT_NAME.to_string(),
-                format!("http://127.0.0.1:{}", 50005),
-            );
+            let client_options = ClientOptions::new(CLIENT_NAME.to_string(), crypto_addr);
             match client_options.connect_crypto() {
                 Ok(retry_client) => retry_client,
                 Err(e) => panic!("client init error: {:?}", &e),
             }
         }));
 
-        let redis_pool = pool();
-
-        let controller = Co::connect(controller_client, redis_pool.clone());
+        let redis_pool = pool(redis_addr);
+        let controller = Co::connect(controller_client);
         let executor = Ex::connect(executor_client);
         let evm = Ev::connect(evm_client);
         let crypto = Cr::connect(crypto_client);
@@ -97,9 +88,5 @@ impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
             crypto,
             redis_pool,
         }
-    }
-
-    pub fn get_redis_connection(&self) -> r2d2::PooledConnection<RedisConnectionManager> {
-        self.redis_pool.get().unwrap()
     }
 }
