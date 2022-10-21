@@ -8,9 +8,9 @@ limits = { form = "64 kB", json = "1 MiB" }
 port = 8000
 ## only the `json` key from `default` will be overridden; `form` will remain
 limits = { json = "10MiB" }
-controller_addr = "http:://127.0.0.1:50004"
-executor_addr = "http:://127.0.0.1:50002"
-crypto_addr = "http:://127.0.0.1:50005"
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
 redis_addr = "redis://default:rivtower@127.0.0.1:6379"
 timing_internal_sec = 1
 timing_batch = 100
@@ -29,9 +29,9 @@ timing_batch = 100
 ## don't use this secret_key! generate your own and keep it private!
 [release]
 port = 9001
-controller_addr = "http:://127.0.0.1:50004"
-executor_addr = "http:://127.0.0.1:50002"
-crypto_addr = "http:://127.0.0.1:50005"
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
 redis_addr = "redis://default:rivtower@127.0.0.1:6379"
 timing_internal_sec = 1
 timing_batch = 100
