@@ -155,13 +155,13 @@ async fn main() {
     let ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient> = Context::new(
         config
             .controller_addr
-            .unwrap_or_else(|| "http:://127.0.0.1:50004".to_string()),
+            .unwrap_or_else(|| "http://127.0.0.1:50004".to_string()),
         config
             .executor_addr
-            .unwrap_or_else(|| "http:://127.0.0.1:50002".to_string()),
+            .unwrap_or_else(|| "http://127.0.0.1:50002".to_string()),
         config
             .crypto_addr
-            .unwrap_or_else(|| "http:://127.0.0.1:50005".to_string()),
+            .unwrap_or_else(|| "http://127.0.0.1:50005".to_string()),
         config
             .redis_addr
             .unwrap_or_else(|| "redis://default:rivtower@127.0.0.1:6379".to_string()),
