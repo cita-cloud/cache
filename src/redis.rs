@@ -45,11 +45,10 @@ pub fn load(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
         Ok(String::default())
     }
 }
-
-// pub fn exists(mut con: PooledConnection<RedisConnectionManager>,
-//               key: String,) -> Result<bool, r2d2_redis::redis::RedisError> {
-//     con().exists(key)
-// }
+#[allow(dead_code)]
+pub fn exists(key: String) -> Result<bool, r2d2_redis::redis::RedisError> {
+    con().exists(key)
+}
 
 pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     key: String,
@@ -58,17 +57,16 @@ pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     con().set::<String, T, String>(key, val)
 }
 
-// pub fn delete(
-//     mut con: PooledConnection<RedisConnectionManager>,
-//     key: String,
-// ) -> Result<String, r2d2_redis::redis::RedisError> {
-//     con().del(key)
-// }
+#[allow(dead_code)]
+pub fn delete(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
+    con().del(key)
+}
 
 pub fn hset(hkey: String, key: String, val: String) -> Result<u64, r2d2_redis::redis::RedisError> {
     con().hset::<String, String, String, u64>(hkey, key, val)
 }
 
+#[allow(dead_code)]
 pub fn hget<T: Clone + Default + ToRedisArgs>(
     hkey: String,
     key: T,

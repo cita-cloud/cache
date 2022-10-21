@@ -14,16 +14,15 @@
 
 extern crate rocket;
 
-use crate::util::{hkey, key, key_without_param, parse_addr, parse_hash, parse_u64, remove_0x};
+use crate::util::{key, key_without_param, parse_addr, parse_hash, parse_u64, remove_0x};
 use rocket::{Request, State};
 
 use crate::context::Context;
-use crate::core::account::MaybeLocked;
 use crate::core::controller::ControllerBehaviour;
 use crate::core::evm::EvmBehaviour;
 use crate::display::Display;
 use crate::error::CacheError;
-use crate::redis::{hget, load, set};
+use crate::redis::{load, set};
 use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use rocket::http::Method::Get;
 use rocket::http::Status;
@@ -274,33 +273,6 @@ impl<'r> FromRequest<'r> for CacheResult<Value, CacheError> {
                     Outcome::Success(CacheResult::Ok(json!(val)))
                 }
             }
-            Err(e) => Outcome::Success(CacheResult::Err(CacheError::Operate(e))),
-        }
-    }
-}
-
-#[rocket::async_trait]
-impl<'r> FromRequest<'r> for CacheResult<MaybeLocked, CacheError> {
-    type Error = ();
-
-    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        let address = match req.headers().get("account").next() {
-            Some(data) => {
-                let addr = remove_0x(data);
-                match parse_addr(addr) {
-                    Ok(_) => addr,
-                    Err(e) => {
-                        return Outcome::Success(CacheResult::Err(CacheError::ParseAddress(e)))
-                    }
-                }
-            }
-            None => return Outcome::Success(CacheResult::Err(CacheError::AccountIsNone)),
-        };
-        match hget(hkey(), address.to_string()) {
-            Ok(data) => match toml::from_str(data.as_str()) {
-                Ok(account) => Outcome::Success(CacheResult::Ok(account)),
-                Err(e) => Outcome::Success(CacheResult::Err(CacheError::TomlDe(e))),
-            },
             Err(e) => Outcome::Success(CacheResult::Err(CacheError::Operate(e))),
         }
     }

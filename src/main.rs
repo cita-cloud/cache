@@ -41,7 +41,7 @@ use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
     receipt, system_config, tx, version,
 };
-use rest_api::post::{create, generate_account, send_tx};
+use rest_api::post::{create, send_tx};
 use rocket::{routes, Build, Rocket};
 use serde::Deserialize;
 use tokio::time;
@@ -74,7 +74,6 @@ fn rocket() -> Rocket<Build> {
                 block_hash,
                 version,
                 create,
-                generate_account,
                 send_tx,
             ],
         )

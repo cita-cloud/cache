@@ -51,6 +51,7 @@ pub fn parse_u64(s: &str) -> Result<u64, ParseIntError> {
     s.parse::<u64>()
 }
 
+#[allow(dead_code)]
 pub fn hex(data: &[u8]) -> String {
     format!("0x{}", hex::encode(data))
 }
@@ -59,34 +60,17 @@ pub fn hex_without_0x(data: &[u8]) -> String {
     hex::encode(data)
 }
 
+#[allow(dead_code)]
 pub fn parse_pk<C: Crypto>(s: &str) -> Result<C::PublicKey> {
     let input = parse_data(s)?;
     C::PublicKey::try_from_slice(&input)
 }
 
+#[allow(dead_code)]
 pub fn parse_sk<C: Crypto>(s: &str) -> Result<C::SecretKey> {
     let input = parse_data(s)?;
     C::SecretKey::try_from_slice(&input)
 }
-
-// pub fn safe_save(path: impl AsRef<Path>, content: &[u8], overwrite_existing: bool) -> Result<()> {
-//     let path = path.as_ref();
-//     let dir = path
-//         .parent()
-//         .ok_or_else(|| anyhow!("cannot load containing dir"))?;
-//
-//     let mut tmp = NamedTempFile::new_in(dir)?;
-//     tmp.write_all(content)?;
-//
-//     let mut f = if overwrite_existing {
-//         tmp.persist(path)?
-//     } else {
-//         tmp.persist_noclobber(path)?
-//     };
-//     f.flush()?;
-//
-//     Ok(())
-// }
 
 pub fn key(key_type: &str, param: &str) -> String {
     format!("{}_{}_{}", KEY_PREFIX, key_type, param)
@@ -96,6 +80,7 @@ pub fn key_without_param(key_type: &str) -> String {
     format!("{}_{}", KEY_PREFIX, key_type)
 }
 
+#[allow(dead_code)]
 pub fn hkey() -> String {
     format!("{}_{}", KEY_PREFIX, ACCOUNTS_KEY_PREFIX)
 }

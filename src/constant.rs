@@ -20,3 +20,4 @@ pub const ACCOUNTS_KEY_PREFIX: &str = "accounts";
 pub const HASH_TX_MAPPING: &str = "hash_tx";
 pub const TX_HASH: &str = "tx_hash";
 pub const TX_POOL: &str = "tx_pool";
+pub const ACCOUNT_ADDRESS: &str = "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7";

@@ -19,9 +19,12 @@ use anyhow::Result;
 
 use prost::Message;
 
+use crate::constant::ACCOUNT_ADDRESS;
+use crate::core::crypto::CryptoBehaviour;
 use crate::crypto::{ArrayLike, Hash};
 use crate::redis::{hset, zadd};
-use crate::util::{hash_tx_key, hex_without_0x, timestamp, tx_pool_key};
+use crate::util::{hash_tx_key, hex_without_0x, parse_addr, timestamp, tx_pool_key};
+use crate::CryptoClient;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -215,13 +218,22 @@ impl ControllerBehaviour for ControllerClient {
         Ok(resp.code)
     }
 }
-
+use crate::display::Display;
+#[tonic::async_trait]
 pub trait SignerBehaviour {
-    fn hash(&self, msg: &[u8]) -> Vec<u8>;
-    fn address(&self) -> &[u8];
-    fn sign(&self, msg: &[u8]) -> Vec<u8>;
+    async fn hash(&self, msg: Vec<u8>) -> Vec<u8> {
+        self.client().hash_data(msg).await
+    }
+    fn address(&self) -> Vec<u8> {
+        parse_addr(ACCOUNT_ADDRESS).unwrap().to_vec()
+    }
+    async fn sign(&self, msg: Vec<u8>) -> Vec<u8> {
+        self.client().sign_message(msg).await
+    }
 
-    fn sign_raw_tx(&self, tx: CloudNormalTransaction) -> RawTransaction {
+    fn client(&self) -> CryptoClient;
+
+    async fn sign_raw_tx(&self, tx: CloudNormalTransaction) -> RawTransaction {
         // calc tx hash
         let tx_hash = {
             // build tx bytes
@@ -230,12 +242,12 @@ pub trait SignerBehaviour {
                 tx.encode(&mut buf).unwrap();
                 buf
             };
-            self.hash(tx_bytes.as_slice())
+            self.hash(tx_bytes).await
         };
 
         // sign tx hash
-        let sender = self.address().to_vec();
-        let signature = self.sign(tx_hash.as_slice()).to_vec();
+        let sender = self.address();
+        let signature = self.sign(tx_hash.clone()).await.to_vec();
 
         // build raw tx
         let raw_tx = {
@@ -251,11 +263,14 @@ pub trait SignerBehaviour {
                 tx: Some(Tx::NormalTx(unverified_tx)),
             }
         };
-
+        println!("raw_tx: {}", raw_tx.display());
         raw_tx
     }
 
-    fn sign_raw_utxo(&self, utxo: CloudUtxoTransaction) -> RawTransaction {
+    async fn sign_raw_utxo(&self, utxo: CloudUtxoTransaction) -> RawTransaction
+    where
+        Self: Sync,
+    {
         // calc utxo hash
         let utxo_hash = {
             // build utxo bytes
@@ -264,12 +279,12 @@ pub trait SignerBehaviour {
                 utxo.encode(&mut buf).unwrap();
                 buf
             };
-            self.hash(utxo_bytes.as_slice())
+            self.hash(utxo_bytes).await
         };
 
         // sign utxo hash
         let sender = self.address().to_vec();
-        let signature = self.sign(utxo_hash.as_slice()).to_vec();
+        let signature = self.sign(utxo_hash.clone()).await.to_vec();
 
         // build raw utxo
         let raw_utxo = {
@@ -340,7 +355,7 @@ where
         let mut buf = vec![];
         let timestamp = timestamp();
         let empty = Vec::new();
-        let raw = signer.sign_raw_tx(raw_tx);
+        let raw = signer.sign_raw_tx(raw_tx).await;
         raw.encode(&mut buf).unwrap();
 
         let hash = match raw.tx {
@@ -362,7 +377,7 @@ where
     where
         S: SignerBehaviour + Send + Sync,
     {
-        let raw = signer.sign_raw_utxo(raw_utxo);
+        let raw = signer.sign_raw_utxo(raw_utxo).await;
         self.send_raw(raw).await.context("failed to send raw")
     }
 

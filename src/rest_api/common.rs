@@ -1,5 +1,4 @@
 use crate::constant::{FAILURE, SUCCESS, SUCCESS_MESSAGE};
-use crate::core::account::CryptoType;
 use crate::error::CacheError;
 use crate::rest_api::get::*;
 use crate::rest_api::post::*;
@@ -78,9 +77,8 @@ system_config,
 block_hash,
 version,
 create,
-generate_account,
 send_tx,
 ),
-components(SuccessResult, FailureResult, CreateContract<'_>, GenerateAccount, CryptoType, SendTx<'_>)
+components(SuccessResult, FailureResult, CreateContract<'_>, SendTx<'_>)
 )]
 pub struct ApiDoc;

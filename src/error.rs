@@ -39,6 +39,4 @@ pub enum CacheError {
     TomlSer(#[from] toml::ser::Error),
     #[error("deserialize toml error: {0}")]
     TomlDe(#[from] toml::de::Error),
-    #[error("the account is none")]
-    AccountIsNone,
 }
