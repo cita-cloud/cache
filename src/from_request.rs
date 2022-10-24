@@ -23,7 +23,7 @@ use crate::core::evm::EvmBehaviour;
 use crate::display::Display;
 use crate::error::CacheError;
 use crate::redis::{load, set};
-use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient, hash_to_receipt, hget};
+use crate::{hash_to_receipt, hget, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use rocket::http::Method::Get;
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome};
@@ -254,15 +254,11 @@ impl<'r> FromRequest<'r> for CacheResult<Value, CacheError> {
                 Ok(data) => Outcome::Success(CacheResult::Ok(data)),
                 Err(e) => Outcome::Success(CacheResult::Err(e)),
             };
+        } else if pattern == "receipt" {
+            let value = hget(hash_to_receipt(), param).unwrap();
+            key(pattern, value.as_str())
         } else {
-            if pattern == "receipt" {
-                let value = hget(hash_to_receipt(), param).unwrap();
-                key(pattern, value.as_str())
-            } else {
-                key(pattern, param)
-            }
-
-
+            key(pattern, param)
         };
         match load(key.clone()) {
             Ok(val) => {

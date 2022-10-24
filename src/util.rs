@@ -80,7 +80,6 @@ pub fn key_without_param(key_type: &str) -> String {
     format!("{}_{}", KEY_PREFIX, key_type)
 }
 
-
 pub fn uncommitted_tx_key() -> String {
     format!("{}_{}", KEY_PREFIX, UNCOMMITTED_TX)
 }

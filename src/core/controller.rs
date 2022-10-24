@@ -22,6 +22,8 @@ use prost::Message;
 use crate::constant::ACCOUNT_ADDRESS;
 use crate::core::crypto::CryptoBehaviour;
 use crate::crypto::{ArrayLike, Hash};
+use crate::display::Display;
+use crate::error::CacheError;
 use crate::redis::{hkeys, hset, zadd};
 use crate::util::{hash_to_tx, hex_without_0x, parse_addr, timestamp, uncommitted_tx_key};
 use crate::CryptoClient;
@@ -38,8 +40,6 @@ use cita_cloud_proto::{
     controller::{BlockNumber, Flag, SystemConfig},
 };
 use tokio::sync::OnceCell;
-use crate::display::Display;
-use crate::error::CacheError;
 
 #[derive(Debug, Clone)]
 pub struct ControllerClient {
@@ -221,7 +221,6 @@ impl ControllerBehaviour for ControllerClient {
     }
 }
 
-
 #[tonic::async_trait]
 pub trait SignerBehaviour {
     async fn hash(&self, msg: Vec<u8>) -> Vec<u8> {
@@ -362,30 +361,28 @@ where
             value: clone.value,
             quota: clone.quota,
             ..Default::default()
-
         };
         let tx_bytes = {
             let mut buf = Vec::with_capacity(default.encoded_len());
             default.encode(&mut buf).unwrap();
             buf
         };
-        let hash = signer.hash(tx_bytes).await;
-        let hash = hash.as_slice();
-        let hash_str = hex_without_0x(hash.clone());
+        let hash_vec = signer.hash(tx_bytes).await;
+        let hash = hash_vec.as_slice();
+        let hash_str = hex_without_0x(hash);
         let timestamp = timestamp();
         for hash in hkeys::<String>(hash_to_tx())? {
             if hash == hash_str {
                 return Err(anyhow::Error::from(CacheError::TxExist));
             }
         }
-        let num = zadd(uncommitted_tx_key(), hash_str.clone(), timestamp)?;
+        zadd(uncommitted_tx_key(), hash_str.clone(), timestamp)?;
 
         let mut buf = vec![];
         let raw = signer.sign_raw_tx(raw_tx).await;
         raw.encode(&mut buf).unwrap();
         let tx_str = hex_without_0x(&buf[..]);
         hset(hash_to_tx(), hash_str, tx_str)?;
-
 
         Ok(Hash::try_from_slice(hash).unwrap())
         // self.send_raw(raw).await.context("failed to send raw")

@@ -24,9 +24,8 @@ mod redis;
 mod rest_api;
 mod util;
 
-use std::fmt::format;
-use anyhow::{anyhow, Error};
 use crate::context::Context;
+use crate::core::account::Account;
 use crate::core::controller::{ControllerBehaviour, ControllerClient, TransactionSenderBehaviour};
 use crate::core::crypto::CryptoClient;
 use crate::core::evm::{EvmBehaviour, EvmClient};
@@ -35,8 +34,13 @@ use crate::crypto::{ArrayLike, Hash};
 use crate::display::init_local_utc_offset;
 use crate::display::Display;
 use crate::redis::{hdel, hget, hset, pool, set, zadd, zrange, zrange_withscores, zrem};
-use crate::util::{committed_tx_key, hash_to_receipt, hash_to_tx, hex_without_0x, key, parse_data, timestamp, uncommitted_tx_key};
-use cita_cloud_proto::blockchain::{RawTransaction, raw_transaction::Tx};
+use crate::rest_api::post::new_raw_tx;
+use crate::util::{
+    committed_tx_key, hash_to_receipt, hash_to_tx, hex_without_0x, key, parse_data,
+    uncommitted_tx_key,
+};
+use anyhow::Result;
+use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
 use prost::Message;
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
@@ -44,18 +48,12 @@ use rest_api::get::{
     receipt, system_config, tx, version,
 };
 use rest_api::post::{create, send_tx};
-use rocket::{routes, Build, Rocket};
 use rocket::form::validate::Contains;
+use rocket::{routes, Build, Rocket};
 use serde::Deserialize;
 use tokio::time;
-use tonic::{Code, Status};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
-use status_code::StatusCode;
-use crate::rest_api::post::new_raw_tx;
-use anyhow::Result;
-use crate::core::account::Account;
-
 
 #[macro_use]
 extern crate rocket;
@@ -99,8 +97,7 @@ async fn process(
     let members = zrange_withscores::<String>(uncommitted_tx_key(), 0, timing_batch)?;
     for (fake_tx_hash, score) in members {
         let tx = hget(hash_to_tx(), fake_tx_hash.clone())?;
-        let decoded: RawTransaction =
-            Message::decode(&parse_data(tx.as_str()).unwrap()[..])?;
+        let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str()).unwrap()[..])?;
         println!("{}", decoded.display());
         match controller.send_raw(decoded.clone()).await {
             Ok(data) => {
@@ -115,8 +112,11 @@ async fn process(
                 if err_str.contains("InvalidValidUntilBlock") {
                     zrem(uncommitted_tx_key(), fake_tx_hash.clone())?;
                     if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
-                        let raw_tx = new_raw_tx(controller.clone(), normal_tx.transaction.unwrap()).await?;
-                        let data = controller.send_raw_tx(&Account::new(crypto.clone()), raw_tx.clone()).await?;
+                        let raw_tx =
+                            new_raw_tx(controller.clone(), normal_tx.transaction.unwrap()).await?;
+                        let data = controller
+                            .send_raw_tx(&Account::new(crypto.clone()), raw_tx.clone())
+                            .await?;
                         println!("recommit tx, fake hash: {}", data.display());
                         continue;
                     }
@@ -127,7 +127,7 @@ async fn process(
                     Some(Tx::UtxoTx(ref utxo_tx)) => &utxo_tx.transaction_hash,
                     None => empty.as_slice(),
                 };
-                let hash_str = hex_without_0x(&hash);
+                let hash_str = hex_without_0x(hash);
                 set(key("receipt", &hash_str), err_str).unwrap();
             }
         }
@@ -137,9 +137,7 @@ async fn process(
         let receipt = hget(hash_to_receipt(), fake_tx_hash.clone())?;
         let hash_str = receipt.as_str();
         match evm
-            .get_receipt(
-                Hash::try_from_slice(&parse_data(hash_str).unwrap()[..]).unwrap(),
-            )
+            .get_receipt(Hash::try_from_slice(&parse_data(hash_str).unwrap()[..]).unwrap())
             .await
         {
             Ok(receipt) => {
@@ -151,10 +149,9 @@ async fn process(
             }
             Err(e) => println!("get receipt fail: {:?}", e),
         }
-    };
+    }
     Ok(())
 }
-
 
 async fn send_tx_async(
     timing_internal_sec: u64,
@@ -166,8 +163,15 @@ async fn send_tx_async(
     let mut internal = time::interval(time::Duration::from_secs(timing_internal_sec));
     loop {
         internal.tick().await;
-        match process(timing_batch, controller.clone(), evm.clone(), crypto.clone()).await {
-            Ok(_) => {},
+        match process(
+            timing_batch,
+            controller.clone(),
+            evm.clone(),
+            crypto.clone(),
+        )
+        .await
+        {
+            Ok(_) => {}
             Err(e) => println!("process failed: {}", e),
         }
     }
@@ -219,5 +223,3 @@ async fn main() {
         drop(e);
     };
 }
-
-

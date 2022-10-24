@@ -79,7 +79,10 @@ async fn get_contract_tx(
     Ok(tx)
 }
 
-pub async fn get_raw_tx(client: ControllerClient, tx: SendTx<'_>) -> Result<CloudNormalTransaction> {
+pub async fn get_raw_tx(
+    client: ControllerClient,
+    tx: SendTx<'_>,
+) -> Result<CloudNormalTransaction> {
     let current = client.get_block_number(false).await?;
     let valid_until_block: u64 = (current as i64 + 20) as u64;
     let to = parse_addr(tx.to)?.to_vec();
@@ -105,7 +108,10 @@ pub async fn get_raw_tx(client: ControllerClient, tx: SendTx<'_>) -> Result<Clou
     Ok(tx)
 }
 
-pub async fn new_raw_tx(client: ControllerClient, tx: CloudNormalTransaction) -> Result<CloudNormalTransaction> {
+pub async fn new_raw_tx(
+    client: ControllerClient,
+    tx: CloudNormalTransaction,
+) -> Result<CloudNormalTransaction> {
     let current = client.get_block_number(false).await?;
     let valid_until_block: u64 = (current as i64 + 20) as u64;
     let to = tx.to;
