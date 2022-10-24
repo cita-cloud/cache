@@ -12,14 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub const SUCCESS: u64 = 1;
-pub const FAILURE: u64 = 0;
-pub const SUCCESS_MESSAGE: &str = "success";
-pub const KEY_PREFIX: &str = "cache";
-
-pub const UNCOMMITTED_TX: &str = "uncommitted_tx_hash";
-pub const COMMITTED_TX: &str = "committed_tx_hash";
-pub const HASH_TO_TX: &str = "hash_to_tx";
-pub const HASH_TO_RECEIPT: &str = "hash_to_receipt";
-
-pub const ACCOUNT_ADDRESS: &str = "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7";
+pub mod account;
+pub mod controller;
+pub mod crypto;
+pub mod evm;
+pub mod executor;
