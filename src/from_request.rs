@@ -23,12 +23,13 @@ use crate::core::evm::EvmBehaviour;
 use crate::display::Display;
 use crate::error::CacheError;
 use crate::redis::{load, set};
+use crate::rest_api::common::{failure, success, CacheResult};
 use crate::{hash_to_receipt, hget, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use anyhow::Result;
 use rocket::http::Method::Get;
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome};
 use serde_json::{json, Value};
-use std::result::Result;
 use std::string::String;
 
 fn get_param<'r>(req: &'r Request<'_>, index: usize) -> &'r str {
@@ -37,12 +38,6 @@ fn get_param<'r>(req: &'r Request<'_>, index: usize) -> &'r str {
     } else {
         ""
     }
-}
-
-#[derive(Debug)]
-pub enum CacheResult<T, E> {
-    Ok(T),
-    Err(E),
 }
 
 fn path_count(req: &Request) -> usize {
@@ -60,153 +55,120 @@ fn with_param(req: &Request) -> bool {
     path_count(req) == vec!["", "api", "{query-name}", "{param}"].len()
 }
 
-fn query_error(path: &str, detail: anyhow::Error) -> CacheError {
-    CacheError::QueryCitaCloud {
-        query_type: path.replace('-', " "),
-        detail,
-    }
-}
-
-async fn save_and_get(
+async fn get_and_save(
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     path: &str,
     param: &str,
     key: String,
-) -> Result<Value, CacheError> {
+) -> Result<Value> {
     match path {
-        "block-number" => match ctx.controller.get_block_number(false).await {
-            Ok(block_number) => match set(key, block_number) {
-                Ok(_) => Ok(json!(block_number)),
-                Err(e) => Err(CacheError::Operate(e)),
-            },
-            Err(detail) => Err(query_error(path, detail)),
-        },
-        "peers-count" => match ctx.controller.get_peer_count().await {
-            Ok(peer_count) => match set(key, peer_count) {
-                Ok(_) => Ok(json!(peer_count)),
-                Err(e) => Err(CacheError::Operate(e)),
-            },
-            Err(detail) => Err(query_error(path, detail)),
-        },
-        "version" => match ctx.controller.get_version().await {
-            Ok(version) => match set(key, version.clone()) {
-                Ok(_) => Ok(json!(version)),
-                Err(e) => Err(CacheError::Operate(e)),
-            },
-            Err(detail) => Err(query_error(path, detail)),
-        },
-        "peers-info" => match ctx.controller.get_peers_info().await {
-            Ok(info) => match set(key, info.display()) {
-                Ok(_) => Ok(info.to_json()),
-                Err(e) => Err(CacheError::Operate(e)),
-            },
-            Err(detail) => Err(query_error(path, detail)),
-        },
-        "system-config" => match ctx.controller.get_system_config().await {
-            Ok(config) => match set(key, config.display()) {
-                Ok(_) => Ok(config.to_json()),
-                Err(e) => Err(CacheError::Operate(e)),
-            },
-            Err(detail) => Err(query_error(path, detail)),
-        },
-        "abi" => match parse_addr(param) {
-            Ok(data) => match ctx.evm.get_abi(data).await {
-                Ok(abi) => match set(key, abi.display()) {
-                    Ok(_) => Ok(json!(abi.display())),
-                    Err(e) => Err(CacheError::Operate(e)),
-                },
-                Err(detail) => Err(query_error(path, detail)),
-            },
-            Err(e) => Err(CacheError::ParseAddress(e)),
-        },
-        "account-nonce" => match parse_addr(param) {
-            Ok(data) => match ctx.evm.get_tx_count(data).await {
-                Ok(nonce) => match set(key, nonce.display()) {
-                    Ok(_) => Ok(json!(nonce.display())),
-                    Err(e) => Err(CacheError::Operate(e)),
-                },
-                Err(detail) => Err(query_error(path, detail)),
-            },
-            Err(e) => Err(CacheError::ParseAddress(e)),
-        },
-        "balance" => match parse_addr(param) {
-            Ok(data) => match ctx.evm.get_balance(data).await {
-                Ok(balance) => match set(key, balance.display()) {
-                    Ok(_) => Ok(json!(balance.display())),
-                    Err(e) => Err(CacheError::Operate(e)),
-                },
-                Err(detail) => Err(query_error(path, detail)),
-            },
-            Err(e) => Err(CacheError::ParseAddress(e)),
-        },
-        "code" => match parse_addr(param) {
-            Ok(data) => match ctx.evm.get_code(data).await {
-                Ok(code) => match set(key, code.display()) {
-                    Ok(_) => Ok(json!(code.display())),
-                    Err(e) => Err(CacheError::Operate(e)),
-                },
-                Err(detail) => Err(query_error(path, detail)),
-            },
-            Err(e) => Err(CacheError::ParseAddress(e)),
-        },
-        "block-hash" => match parse_u64(param) {
-            Ok(data) => match ctx.controller.get_block_hash(data).await {
-                Ok(hash) => match set(key, hash.display()) {
-                    Ok(_) => Ok(json!(hash.display())),
-                    Err(e) => Err(CacheError::Operate(e)),
-                },
-                Err(detail) => Err(query_error(path, detail)),
-            },
-            Err(e) => Err(CacheError::ParseInt(e)),
-        },
+        "block-number" => {
+            let block_number = ctx.controller.get_block_number(false).await?;
+            set(key, block_number)?;
+            Ok(json!(block_number))
+        }
+        "peers-count" => {
+            let peer_count = ctx.controller.get_peer_count().await?;
+            set(key, peer_count)?;
+            Ok(json!(peer_count))
+        }
+        "version" => {
+            let version = ctx.controller.get_version().await?;
+            set(key, version.clone())?;
+            Ok(json!(version))
+        }
+        "peers-info" => {
+            let info = ctx.controller.get_peers_info().await?;
+            set(key, info.display())?;
+            Ok(info.to_json())
+        }
+        "system-config" => {
+            let config = ctx.controller.get_system_config().await?;
+            set(key, config.display())?;
+            Ok(config.to_json())
+        }
+        "abi" => {
+            let data = parse_addr(param)?;
+            let abi = ctx.evm.get_abi(data).await?;
+            set(key, abi.display())?;
+            Ok(abi.to_json())
+        }
+        "account-nonce" => {
+            let data = parse_addr(param)?;
+            let nonce = ctx.evm.get_tx_count(data).await?;
+            set(key, nonce.display())?;
+            Ok(nonce.to_json())
+        }
+        "balance" => {
+            let data = parse_addr(param)?;
+            let balance = ctx.evm.get_balance(data).await?;
+            set(key, balance.display())?;
+            Ok(balance.to_json())
+        }
+        "code" => {
+            let data = parse_addr(param)?;
+            let code = ctx.evm.get_code(data).await?;
+            set(key, code.display())?;
+            Ok(code.to_json())
+        }
+        "block-hash" => {
+            let data = parse_u64(param)?;
+            let hash = ctx.controller.get_block_hash(data).await?;
+            set(key, hash.display())?;
+            Ok(hash.to_json())
+        }
         "receipt" => {
-            if let Ok(data) = parse_hash(param) {
-                match ctx.evm.get_receipt(data).await {
-                    Ok(receipt) => match set(key, receipt.display()) {
-                        Ok(_) => Ok(receipt.to_json()),
-                        Err(e) => Err(CacheError::Operate(e)),
-                    },
-                    Err(detail) => Err(query_error(path, detail)),
-                }
-            } else {
-                Err(CacheError::ParseHash)
-            }
+            let data = parse_hash(param)?;
+            let receipt = ctx.evm.get_receipt(data).await?;
+            set(key, receipt.display())?;
+            Ok(receipt.to_json())
         }
         "tx" => {
-            if let Ok(data) = parse_hash(param) {
-                match ctx.controller.get_tx(data).await {
-                    Ok(tx) => match set(key, tx.display()) {
-                        Ok(_) => Ok(tx.to_json()),
-                        Err(e) => Err(CacheError::Operate(e)),
-                    },
-                    Err(detail) => Err(query_error(path, detail)),
-                }
-            } else {
-                Err(CacheError::ParseHash)
-            }
+            let data = parse_hash(param)?;
+            let tx = ctx.controller.get_tx(data).await?;
+            set(key, tx.display())?;
+            Ok(tx.to_json())
         }
         "block" => {
             if let Ok(data) = parse_u64(param) {
-                match ctx.controller.get_block_by_number(data).await {
-                    Ok(block) => match set(key, block.display()) {
-                        Ok(_) => Ok(block.to_json()),
-                        Err(e) => Err(CacheError::Operate(e)),
-                    },
-                    Err(detail) => Err(query_error(path, detail)),
-                }
-            } else if let Ok(data) = parse_hash(param) {
-                match ctx.controller.get_block_by_hash(data).await {
-                    Ok(block) => match set(key, block.display()) {
-                        Ok(_) => Ok(block.to_json()),
-                        Err(e) => Err(CacheError::Operate(e)),
-                    },
-                    Err(detail) => Err(query_error(path, detail)),
-                }
+                let block = ctx.controller.get_block_by_number(data).await?;
+                set(key, block.display())?;
+                Ok(block.to_json())
             } else {
-                Err(CacheError::ParseHash)
+                match parse_hash(param) {
+                    Ok(data) => {
+                        let block = ctx.controller.get_block_by_hash(data).await?;
+                        set(key, block.display())?;
+                        Ok(block.to_json())
+                    }
+                    Err(e) => Err(e),
+                }
             }
         }
-        _ => Err(CacheError::Uri),
+        _ => Ok(Value::Null),
+    }
+}
+
+async fn result(
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    pattern: &str,
+    param: &str,
+) -> Result<CacheResult<Value>> {
+    let key = if pattern == "receipt" {
+        let value = hget(hash_to_receipt(), param)?;
+        key(pattern, value.as_str())
+    } else {
+        key(pattern, param)
+    };
+    let val = load(key.clone())?;
+    if val == String::default() {
+        let data = get_and_save(ctx, pattern, param, key.clone()).await?;
+        Ok(success(data))
+    } else if is_obj(pattern) {
+        let data = serde_json::from_str(val.as_str())?;
+        Ok(success(data))
+    } else {
+        Ok(success(Value::String(val)))
     }
 }
 
@@ -230,7 +192,7 @@ impl<'r> FromRequest<'r> for Context<ControllerClient, ExecutorClient, EvmClient
 }
 
 #[rocket::async_trait]
-impl<'r> FromRequest<'r> for CacheResult<Value, CacheError> {
+impl<'r> FromRequest<'r> for CacheResult<Value> {
     type Error = CacheError;
 
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
@@ -249,34 +211,16 @@ impl<'r> FromRequest<'r> for CacheResult<Value, CacheError> {
         let pattern = &get_param(req, 0)["get-".len()..];
         let param = remove_0x(get_param(req, 1));
 
-        let key = if !with_param(req) {
-            return match save_and_get(ctx, pattern, param, key_without_param(pattern)).await {
-                Ok(data) => Outcome::Success(CacheResult::Ok(data)),
-                Err(e) => Outcome::Success(CacheResult::Err(e)),
-            };
-        } else if pattern == "receipt" {
-            let value = hget(hash_to_receipt(), param).unwrap();
-            key(pattern, value.as_str())
-        } else {
-            key(pattern, param)
-        };
-        match load(key.clone()) {
-            Ok(val) => {
-                if val == String::default() {
-                    match save_and_get(ctx, pattern, param, key.clone()).await {
-                        Ok(data) => Outcome::Success(CacheResult::Ok(data)),
-                        Err(e) => Outcome::Success(CacheResult::Err(e)),
-                    }
-                } else if is_obj(pattern) {
-                    match serde_json::from_str(val.as_str()) {
-                        Ok(data) => Outcome::Success(CacheResult::Ok(data)),
-                        Err(e) => Outcome::Success(CacheResult::Err(CacheError::Deserialize(e))),
-                    }
-                } else {
-                    Outcome::Success(CacheResult::Ok(json!(val)))
-                }
+        if !with_param(req) {
+            match get_and_save(ctx, pattern, param, key_without_param(pattern)).await {
+                Ok(data) => Outcome::Success(success(data)),
+                Err(e) => Outcome::Success(failure(e)),
             }
-            Err(e) => Outcome::Success(CacheResult::Err(CacheError::Operate(e))),
+        } else {
+            match result(ctx, pattern, param).await {
+                Ok(data) => Outcome::Success(data),
+                Err(e) => Outcome::Success(failure(e)),
+            }
         }
     }
 }
