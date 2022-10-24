@@ -58,7 +58,7 @@ fn with_param(req: &Request) -> bool {
 async fn get_and_save(
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     path: &str,
-    param: &str,
+    param: String,
     key: String,
 ) -> Result<Value> {
     match path {
@@ -88,54 +88,54 @@ async fn get_and_save(
             Ok(config.to_json())
         }
         "abi" => {
-            let data = parse_addr(param)?;
+            let data = parse_addr(param.as_str())?;
             let abi = ctx.evm.get_abi(data).await?;
             set(key, abi.display())?;
             Ok(abi.to_json())
         }
         "account-nonce" => {
-            let data = parse_addr(param)?;
+            let data = parse_addr(param.as_str())?;
             let nonce = ctx.evm.get_tx_count(data).await?;
             set(key, nonce.display())?;
             Ok(nonce.to_json())
         }
         "balance" => {
-            let data = parse_addr(param)?;
+            let data = parse_addr(param.as_str())?;
             let balance = ctx.evm.get_balance(data).await?;
             set(key, balance.display())?;
             Ok(balance.to_json())
         }
         "code" => {
-            let data = parse_addr(param)?;
+            let data = parse_addr(param.as_str())?;
             let code = ctx.evm.get_code(data).await?;
             set(key, code.display())?;
             Ok(code.to_json())
         }
         "block-hash" => {
-            let data = parse_u64(param)?;
+            let data = parse_u64(param.as_str())?;
             let hash = ctx.controller.get_block_hash(data).await?;
             set(key, hash.display())?;
             Ok(hash.to_json())
         }
         "receipt" => {
-            let data = parse_hash(param)?;
+            let data = parse_hash(param.as_str())?;
             let receipt = ctx.evm.get_receipt(data).await?;
             set(key, receipt.display())?;
             Ok(receipt.to_json())
         }
         "tx" => {
-            let data = parse_hash(param)?;
+            let data = parse_hash(param.as_str())?;
             let tx = ctx.controller.get_tx(data).await?;
             set(key, tx.display())?;
             Ok(tx.to_json())
         }
         "block" => {
-            if let Ok(data) = parse_u64(param) {
+            if let Ok(data) = parse_u64(param.as_str()) {
                 let block = ctx.controller.get_block_by_number(data).await?;
                 set(key, block.display())?;
                 Ok(block.to_json())
             } else {
-                match parse_hash(param) {
+                match parse_hash(param.as_str()) {
                     Ok(data) => {
                         let block = ctx.controller.get_block_by_hash(data).await?;
                         set(key, block.display())?;
@@ -152,13 +152,14 @@ async fn get_and_save(
 async fn result(
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     pattern: &str,
-    param: &str,
+    param: String,
 ) -> Result<CacheResult<Value>> {
-    let key = if pattern == "receipt" {
-        let value = hget(hash_to_receipt(), param)?;
-        key(pattern, value.as_str())
-    } else {
-        key(pattern, param)
+    let (key, param) = match pattern {
+        "receipt" | "tx" => {
+            let value = hget(hash_to_receipt(), param)?;
+            (key(pattern, value.as_str()), value)
+        }
+        _ => (key(pattern, param.as_str()), param),
     };
     let val = load(key.clone())?;
     if val == String::default() {
@@ -212,12 +213,12 @@ impl<'r> FromRequest<'r> for CacheResult<Value> {
         let param = remove_0x(get_param(req, 1));
 
         if !with_param(req) {
-            match get_and_save(ctx, pattern, param, key_without_param(pattern)).await {
+            match get_and_save(ctx, pattern, param.to_string(), key_without_param(pattern)).await {
                 Ok(data) => Outcome::Success(success(data)),
                 Err(e) => Outcome::Success(failure(e)),
             }
         } else {
-            match result(ctx, pattern, param).await {
+            match result(ctx, pattern, param.to_string()).await {
                 Ok(data) => Outcome::Success(data),
                 Err(e) => Outcome::Success(failure(e)),
             }
