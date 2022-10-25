@@ -98,7 +98,6 @@ async fn process(
     for (fake_tx_hash, score) in members {
         let tx = hget(hash_to_tx(), fake_tx_hash.clone())?;
         let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str()).unwrap()[..])?;
-        println!("{}", decoded.display());
         match controller.send_raw(decoded.clone()).await {
             Ok(data) => {
                 zrem(uncommitted_tx_key(), fake_tx_hash.clone())?;

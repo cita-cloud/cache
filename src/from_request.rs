@@ -44,13 +44,6 @@ fn path_count(req: &Request) -> usize {
     req.uri().path().split('/').count()
 }
 
-fn is_obj(pattern: &str) -> bool {
-    matches!(
-        pattern,
-        "peers-info" | "system-config" | "tx" | "block" | "receipt"
-    )
-}
-
 fn with_param(req: &Request) -> bool {
     path_count(req) == vec!["", "api", "{query-name}", "{param}"].len()
 }
@@ -165,11 +158,11 @@ async fn result(
     if val == String::default() {
         let data = get_and_save(ctx, pattern, param, key.clone()).await?;
         Ok(success(data))
-    } else if is_obj(pattern) {
-        let data = serde_json::from_str(val.as_str())?;
-        Ok(success(data))
     } else {
-        Ok(success(Value::String(val)))
+        match serde_json::from_str(val.as_str()) {
+            Ok(data) => Ok(success(data)),
+            Err(_) => Ok(success(Value::String(val))),
+        }
     }
 }
 
