@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use crate::constant::{COMMITTED_TX, HASH_TO_RECEIPT, HASH_TO_TX, KEY_PREFIX, UNCOMMITTED_TX};
+use crate::constant::{COMMITTED_TX, HASH_TO_RETRY, HASH_TO_TX, KEY_PREFIX, UNCOMMITTED_TX};
 use crate::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
 use std::num::ParseIntError;
@@ -92,8 +92,8 @@ pub fn hash_to_tx() -> String {
     format!("{}_{}", KEY_PREFIX, HASH_TO_TX)
 }
 
-pub fn hash_to_receipt() -> String {
-    format!("{}_{}", KEY_PREFIX, HASH_TO_RECEIPT)
+pub fn hash_to_retry() -> String {
+    format!("{}_{}", KEY_PREFIX, HASH_TO_RETRY)
 }
 
 pub fn timestamp() -> u64 {

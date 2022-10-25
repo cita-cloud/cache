@@ -16,6 +16,4 @@
 pub enum CacheError {
     #[error("uri isn't normalized")]
     Uri,
-    #[error("tx has commit already")]
-    TxExist,
 }

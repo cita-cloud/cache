@@ -20,6 +20,6 @@ pub const KEY_PREFIX: &str = "cache";
 pub const UNCOMMITTED_TX: &str = "uncommitted_tx_hash";
 pub const COMMITTED_TX: &str = "committed_tx_hash";
 pub const HASH_TO_TX: &str = "hash_to_tx";
-pub const HASH_TO_RECEIPT: &str = "hash_to_receipt";
+pub const HASH_TO_RETRY: &str = "hash_to_retry";
 
 pub const ACCOUNT_ADDRESS: &str = "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7";

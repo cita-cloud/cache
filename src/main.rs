@@ -33,13 +33,13 @@ use crate::core::executor::ExecutorClient;
 use crate::crypto::{ArrayLike, Hash};
 use crate::display::init_local_utc_offset;
 use crate::display::Display;
-use crate::redis::{hdel, hget, hset, pool, set, zadd, zrange, zrange_withscores, zrem};
+use crate::redis::{hget, hset, pool, set, zadd, zrange, zrange_withscores, zrem};
 use crate::rest_api::post::new_raw_tx;
 use crate::util::{
-    committed_tx_key, hash_to_receipt, hash_to_tx, hex_without_0x, key, parse_data,
+    committed_tx_key, hash_to_retry, hash_to_tx, hex_without_0x, key, parse_data,
     uncommitted_tx_key,
 };
-use anyhow::Result;
+use anyhow::{Error, Result};
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
 use prost::Message;
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
@@ -95,29 +95,47 @@ async fn process(
     crypto: CryptoClient,
 ) -> Result<()> {
     let members = zrange_withscores::<String>(uncommitted_tx_key(), 0, timing_batch)?;
-    for (fake_tx_hash, score) in members {
-        let tx = hget(hash_to_tx(), fake_tx_hash.clone())?;
+    for (tx_hash, score) in members {
+        let real_hash = if let Ok(new_hash) = hget(hash_to_retry(), tx_hash.clone()) {
+            new_hash
+        } else {
+            tx_hash.clone()
+        };
+        let tx = match hget(hash_to_tx(), real_hash.clone()) {
+            Ok(data) => data,
+            Err(e) => {
+                println!(
+                    "hget hkey: {}, key: {}, error: {}",
+                    hash_to_tx(),
+                    real_hash.clone(),
+                    e
+                );
+                return Err(Error::from(e));
+            }
+        };
         let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str()).unwrap()[..])?;
-        println!("{}", decoded.display());
         match controller.send_raw(decoded.clone()).await {
             Ok(data) => {
-                zrem(uncommitted_tx_key(), fake_tx_hash.clone())?;
-                zadd(committed_tx_key(), fake_tx_hash.clone(), score)?;
+                zrem(uncommitted_tx_key(), tx_hash.clone())?;
+                zadd(committed_tx_key(), tx_hash.clone(), score)?;
                 let hash_str = hex_without_0x(&data);
-                hset(hash_to_receipt(), fake_tx_hash, hash_str.clone())?;
                 println!("send raw tx success: {}", hash_str.clone());
             }
             Err(e) => {
                 let err_str = format!("{}", e);
                 if err_str.contains("InvalidValidUntilBlock") {
-                    zrem(uncommitted_tx_key(), fake_tx_hash.clone())?;
+                    zadd(uncommitted_tx_key(), tx_hash.clone(), score)?;
                     if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
                         let raw_tx =
                             new_raw_tx(controller.clone(), normal_tx.transaction.unwrap()).await?;
                         let data = controller
                             .send_raw_tx(&Account::new(crypto.clone()), raw_tx.clone())
                             .await?;
-                        println!("recommit tx, fake hash: {}", data.display());
+                        let hash = hex_without_0x(data.as_slice());
+                        hset(hash_to_retry(), tx_hash.clone(), hash.clone())?;
+                        //avoid dup operation of a tx
+                        zrem(uncommitted_tx_key(), hash.clone())?;
+                        println!("recommit tx, real hash: {}", hash);
                         continue;
                     }
                 }
@@ -128,26 +146,37 @@ async fn process(
                     None => empty.as_slice(),
                 };
                 let hash_str = hex_without_0x(hash);
-                set(key("receipt", &hash_str), err_str).unwrap();
+                set(key("receipt", &hash_str), err_str.clone())?;
+                set(key("tx", &hash_str), err_str)?;
             }
         }
     }
     let members = zrange::<String>(committed_tx_key(), 0, timing_batch)?;
-    for fake_tx_hash in members {
-        let receipt = hget(hash_to_receipt(), fake_tx_hash.clone())?;
-        let hash_str = receipt.as_str();
-        match evm
-            .get_receipt(Hash::try_from_slice(&parse_data(hash_str).unwrap()[..]).unwrap())
-            .await
-        {
+    for tx_hash in members {
+        let real_hash = if let Ok(new_hash) = hget(hash_to_retry(), tx_hash.clone()) {
+            new_hash
+        } else {
+            tx_hash.clone()
+        };
+        let hash = Hash::try_from_slice(&parse_data(real_hash.as_str()).unwrap()[..])?;
+        match evm.get_receipt(hash).await {
             Ok(receipt) => {
-                set(key("receipt", hash_str), receipt.display())?;
-                zrem(committed_tx_key(), fake_tx_hash.clone())?;
-                zrem(uncommitted_tx_key(), fake_tx_hash.clone())?;
-                hdel(hash_to_tx(), fake_tx_hash.clone())?;
-                // hdel(hash_to_receipt(), fake_tx_hash.clone()).unwrap();
+                zrem(committed_tx_key(), tx_hash.clone())?;
+                zrem(uncommitted_tx_key(), tx_hash.clone())?;
+                set(key("receipt", tx_hash.clone().as_str()), receipt.display())?;
             }
-            Err(e) => println!("get receipt fail: {:?}", e),
+            Err(e) => {
+                set(key("receipt", tx_hash.clone().as_str()), format!("{}", e))?;
+            }
+        }
+
+        match controller.get_tx(hash).await {
+            Ok(tx) => {
+                set(key("tx", tx_hash.as_str()), tx.display())?;
+            }
+            Err(e) => {
+                set(key("tx", tx_hash.as_str()), format!("{}", e))?;
+            }
         }
     }
     Ok(())
