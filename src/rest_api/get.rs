@@ -15,28 +15,19 @@
 extern crate rocket;
 
 use crate::context::Context;
-use crate::error::CacheError;
-use crate::from_request::CacheResult;
-use crate::rest_api::common::{fail, success, QueryResult};
+use crate::rest_api::common::CacheResult;
 use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use rocket::serde::json::Json;
 use serde_json::Value;
-
-fn match_result<T: Default>(result: CacheResult<T, CacheError>) -> Json<QueryResult<T>> {
-    match result {
-        CacheResult::Ok(r) => success(r),
-        CacheResult::Err(e) => fail(e),
-    }
-}
 
 ///Get current block number
 #[get("/get-block-number")]
 #[utoipa::path(get, path = "/api/get-block-number")]
 pub async fn block_number(
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
-    match_result(result)
+) -> Json<CacheResult<Value>> {
+    Json(result)
 }
 
 ///Get contract abi by contract address
@@ -50,11 +41,11 @@ params(
 )]
 pub async fn abi(
     address: &str,
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     println!("get-abi address {}", address);
-    match_result(result)
+    Json(result)
 }
 
 ///Get balance by account address
@@ -68,11 +59,11 @@ params(
 )]
 pub async fn balance(
     address: &str,
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     println!("get-balance address {}", address);
-    match_result(result)
+    Json(result)
 }
 
 ///Get block by height or hash
@@ -86,11 +77,11 @@ params(
 )]
 pub async fn block(
     hash_or_height: &str,
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     println!("get-block hash_or_height {}", hash_or_height);
-    match_result(result)
+    Json(result)
 }
 
 ///Get code by contract address
@@ -104,11 +95,11 @@ params(
 )]
 pub async fn code(
     address: &str,
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     println!("get-code address {}", address);
-    match_result(result)
+    Json(result)
 }
 
 ///Get tx by hash
@@ -122,31 +113,31 @@ params(
 )]
 pub async fn tx(
     hash: &str,
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     println!("get-tx hash {}", hash);
-    match_result(result)
+    Json(result)
 }
 
 ///Get peers count
 #[get("/get-peers-count")]
 #[utoipa::path(get, path = "/api/get-peers-count")]
 pub async fn peers_count(
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
-    match_result(result)
+) -> Json<CacheResult<Value>> {
+    Json(result)
 }
 
 ///Get peers info
 #[get("/get-peers-info")]
 #[utoipa::path(get, path = "/api/get-peers-info")]
 pub async fn peers_info(
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
-    match_result(result)
+) -> Json<CacheResult<Value>> {
+    Json(result)
 }
 
 ///Get nonce by account address
@@ -160,11 +151,11 @@ params(
 )]
 pub async fn account_nonce(
     address: &str,
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     println!("get-account-nonce address {}", address);
-    match_result(result)
+    Json(result)
 }
 
 ///Get tx receipt by hash
@@ -178,31 +169,31 @@ params(
 )]
 pub async fn receipt(
     hash: &str,
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     println!("get-receipt hash {}", hash);
-    match_result(result)
+    Json(result)
 }
 
 ///Get chain version
 #[get("/get-version")]
 #[utoipa::path(get, path = "/api/get-version")]
 pub async fn version(
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
-    match_result(result)
+) -> Json<CacheResult<Value>> {
+    Json(result)
 }
 
 ///Get system config
 #[get("/get-system-config")]
 #[utoipa::path(get, path = "/api/get-system-config")]
 pub async fn system_config(
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
-    match_result(result)
+) -> Json<CacheResult<Value>> {
+    Json(result)
 }
 
 ///Get block hash by block number
@@ -216,9 +207,9 @@ params(
 )]
 pub async fn block_hash(
     block_number: usize,
-    result: CacheResult<Value, CacheError>,
+    result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     println!("get-block-hash block_number {}", block_number);
-    match_result(result)
+    Json(result)
 }

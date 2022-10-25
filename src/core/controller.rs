@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #![allow(clippy::let_and_return)]
-
 use anyhow::Context;
 use anyhow::Result;
 

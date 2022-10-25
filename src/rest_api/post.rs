@@ -19,8 +19,7 @@ use crate::context::Context;
 use crate::core::account::Account;
 use crate::core::controller::{ControllerBehaviour, TransactionSenderBehaviour};
 use crate::display::Display;
-use crate::error::CacheError;
-use crate::rest_api::common::{fail, success, QueryResult};
+use crate::rest_api::common::{failure, success, CacheResult};
 use crate::util::{parse_addr, parse_data, parse_value};
 use crate::{ArrayLike, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use anyhow::Result;
@@ -147,15 +146,15 @@ request_body = CreateContract,
 pub async fn create(
     result: Json<CreateContract<'_>>,
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     let account = Account::new(ctx.crypto.clone());
     let tx = match get_contract_tx(result.0, ctx.controller.clone()).await {
         Ok(data) => data,
-        Err(e) => return fail(CacheError::ParseAddress(e)),
+        Err(e) => return Json(failure(e)),
     };
     match ctx.controller.send_raw_tx(&account, tx).await {
-        Ok(data) => success(Value::String(data.display())),
-        Err(e) => fail(CacheError::ParseAddress(e)),
+        Ok(data) => Json(success(Value::String(data.display()))),
+        Err(e) => Json(failure(e)),
     }
 }
 
@@ -169,15 +168,15 @@ request_body = SendTx,
 pub async fn send_tx(
     result: Json<SendTx<'_>>,
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-) -> Json<QueryResult<Value>> {
+) -> Json<CacheResult<Value>> {
     let account = Account::new(ctx.crypto.clone());
 
     let raw_tx = match get_raw_tx(ctx.controller.clone(), result.0).await {
         Ok(data) => data,
-        Err(e) => return fail(CacheError::ParseAddress(e)),
+        Err(e) => return Json(failure(e)),
     };
     match ctx.controller.send_raw_tx(&account, raw_tx).await {
-        Ok(data) => success(Value::String(data.display())),
-        Err(e) => fail(CacheError::ParseAddress(e)),
+        Ok(data) => Json(success(Value::String(data.display()))),
+        Err(e) => Json(failure(e)),
     }
 }
