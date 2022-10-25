@@ -21,9 +21,7 @@ use prost::Message;
 use crate::constant::ACCOUNT_ADDRESS;
 use crate::core::crypto::CryptoBehaviour;
 use crate::crypto::{ArrayLike, Hash};
-use crate::display::Display;
-use crate::error::CacheError;
-use crate::redis::{hkeys, hset, zadd};
+use crate::redis::{hset, zadd};
 use crate::util::{hash_to_tx, hex_without_0x, parse_addr, timestamp, uncommitted_tx_key};
 use crate::CryptoClient;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
@@ -264,7 +262,6 @@ pub trait SignerBehaviour {
                 tx: Some(Tx::NormalTx(unverified_tx)),
             }
         };
-        println!("raw_tx: {}", raw_tx.display());
         raw_tx
     }
 
@@ -353,34 +350,22 @@ where
     where
         S: SignerBehaviour + Send + Sync,
     {
-        let clone = raw_tx.clone();
-        let default: CloudNormalTransaction = CloudNormalTransaction {
-            to: clone.to,
-            data: clone.data,
-            value: clone.value,
-            quota: clone.quota,
-            ..Default::default()
-        };
-        let tx_bytes = {
-            let mut buf = Vec::with_capacity(default.encoded_len());
-            default.encode(&mut buf).unwrap();
-            buf
-        };
-        let hash_vec = signer.hash(tx_bytes).await;
-        let hash = hash_vec.as_slice();
-        let hash_str = hex_without_0x(hash);
-        let timestamp = timestamp();
-        for hash in hkeys::<String>(hash_to_tx())? {
-            if hash == hash_str {
-                return Err(anyhow::Error::from(CacheError::TxExist));
-            }
-        }
-        zadd(uncommitted_tx_key(), hash_str.clone(), timestamp)?;
-
         let mut buf = vec![];
         let raw = signer.sign_raw_tx(raw_tx).await;
-        raw.encode(&mut buf).unwrap();
+        let empty = Vec::new();
+        let hash = match raw.tx {
+            Some(Tx::NormalTx(ref normal_tx)) => &normal_tx.transaction_hash,
+            Some(Tx::UtxoTx(ref utxo_tx)) => &utxo_tx.transaction_hash,
+            None => empty.as_slice(),
+        };
+        raw.encode(&mut buf)?;
+
         let tx_str = hex_without_0x(&buf[..]);
+        let timestamp = timestamp();
+
+        let hash_str = hex_without_0x(hash);
+        zadd(uncommitted_tx_key(), hash_str.clone(), timestamp)?;
+
         hset(hash_to_tx(), hash_str, tx_str)?;
 
         Ok(Hash::try_from_slice(hash).unwrap())

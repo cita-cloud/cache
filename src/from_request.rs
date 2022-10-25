@@ -24,7 +24,7 @@ use crate::display::Display;
 use crate::error::CacheError;
 use crate::redis::{load, set};
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{hash_to_receipt, hget, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{hash_to_retry, hget, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use anyhow::Result;
 use rocket::http::Method::Get;
 use rocket::http::Status;
@@ -42,13 +42,6 @@ fn get_param<'r>(req: &'r Request<'_>, index: usize) -> &'r str {
 
 fn path_count(req: &Request) -> usize {
     req.uri().path().split('/').count()
-}
-
-fn is_obj(pattern: &str) -> bool {
-    matches!(
-        pattern,
-        "peers-info" | "system-config" | "tx" | "block" | "receipt"
-    )
 }
 
 fn with_param(req: &Request) -> bool {
@@ -155,21 +148,29 @@ async fn result(
     param: String,
 ) -> Result<CacheResult<Value>> {
     let (key, param) = match pattern {
-        "receipt" | "tx" => {
-            let value = hget(hash_to_receipt(), param)?;
-            (key(pattern, value.as_str()), value)
-        }
+        "receipt" | "tx" => match hget(hash_to_retry(), param.clone()) {
+            Ok(value) => (key(pattern, value.as_str()), value),
+            Err(e) => {
+                println!(
+                    "hget hkey:{}, key:{}, err_msg: {:?}",
+                    hash_to_retry(),
+                    param.clone(),
+                    e
+                );
+                (key(pattern, param.as_str()), param)
+            }
+        },
         _ => (key(pattern, param.as_str()), param),
     };
     let val = load(key.clone())?;
     if val == String::default() {
         let data = get_and_save(ctx, pattern, param, key.clone()).await?;
         Ok(success(data))
-    } else if is_obj(pattern) {
-        let data = serde_json::from_str(val.as_str())?;
-        Ok(success(data))
     } else {
-        Ok(success(Value::String(val)))
+        match serde_json::from_str(val.as_str()) {
+            Ok(data) => Ok(success(data)),
+            Err(_) => Ok(success(Value::String(val))),
+        }
     }
 }
 

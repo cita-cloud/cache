@@ -16,6 +16,7 @@ extern crate rocket;
 use r2d2::PooledConnection;
 use r2d2_redis::redis::{Commands, FromRedisValue, ToRedisArgs};
 use r2d2_redis::RedisConnectionManager;
+use std::fmt::Display;
 use tokio::sync::OnceCell;
 
 pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
@@ -66,14 +67,14 @@ pub fn hset(hkey: String, key: String, val: String) -> Result<u64, r2d2_redis::r
     con().hset::<String, String, String, u64>(hkey, key, val)
 }
 
-#[allow(dead_code)]
-pub fn hget<T: Clone + Default + ToRedisArgs>(
+pub fn hget<T: Clone + Default + ToRedisArgs + Display>(
     hkey: String,
     key: T,
 ) -> Result<String, r2d2_redis::redis::RedisError> {
     con().hget(hkey, key)
 }
 
+#[allow(dead_code)]
 pub fn hdel<T: Clone + Default + ToRedisArgs>(
     hkey: String,
     key: T,
@@ -81,6 +82,7 @@ pub fn hdel<T: Clone + Default + ToRedisArgs>(
     con().hdel(hkey, key)
 }
 
+#[allow(dead_code)]
 pub fn hkeys<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     hkey: String,
 ) -> Result<Vec<T>, r2d2_redis::redis::RedisError> {
