@@ -128,7 +128,8 @@ async fn process(
                     None => empty.as_slice(),
                 };
                 let hash_str = hex_without_0x(hash);
-                set(key("receipt", &hash_str), err_str).unwrap();
+                hset(hash_to_receipt(), fake_tx_hash, hash_str.clone())?;
+                set(key("receipt", &hash_str), err_str)?;
             }
         }
     }
