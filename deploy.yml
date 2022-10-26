@@ -354,9 +354,9 @@ spec:
               name: config
           workingDir: /data
         - command:
-            - cache
+            - ROCKET_CONFIG=Cache.toml;ROCKET_PROFILE=test;ROCKET_ACCOUNT=757ca1c731a3d7e9bdbd0e22ee65918674a77bd7 cache
           name: cache
-          image: "docker.io/citacloud/cache:v0.1.1"
+          image: "docker.io/citacloud/cache:latest"
           imagePullPolicy: Always
           ports:
             - containerPort: 8000

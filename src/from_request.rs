@@ -149,7 +149,7 @@ async fn result(
 ) -> Result<CacheResult<Value>> {
     let (key, param) = match pattern {
         "receipt" | "tx" => match hget(hash_to_retry(), param.clone()) {
-            Ok(value) => (key(pattern, value.as_str()), value),
+            Ok(value) => (key(pattern.to_string(), value.clone()), value),
             Err(e) => {
                 println!(
                     "hget hkey:{}, key:{}, err_msg: {:?}",
@@ -157,10 +157,10 @@ async fn result(
                     param.clone(),
                     e
                 );
-                (key(pattern, param.as_str()), param)
+                (key(pattern.to_string(), param.clone()), param)
             }
         },
-        _ => (key(pattern, param.as_str()), param),
+        _ => (key(pattern.to_string(), param.clone()), param),
     };
     let val = load(key.clone())?;
     if val == String::default() {

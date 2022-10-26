@@ -1,0 +1,44 @@
+## defaults for _all_ profiles
+[default]
+port = 8000
+limits = { json = "10MiB" }
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+timing_internal_sec = 1
+timing_batch = 50
+account = "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7"
+
+## set only when compiled in debug mode, i.e, `cargo build`
+[debug]
+port = 8000
+## only the `json` key from `default` will be overridden; `form` will remain
+limits = { json = "10MiB" }
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+timing_internal_sec = 1
+timing_batch = 100
+
+## set only when the `nyc` profile is selected
+[test]
+port = 8000
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+timing_internal_sec = 1
+timing_batch = 100
+
+## set only when compiled in release mode, i.e, `cargo build --release`
+## don't use this secret_key! generate your own and keep it private!
+[release]
+port = 9001
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+timing_internal_sec = 1
+timing_batch = 100

@@ -21,10 +21,11 @@ use crate::core::controller::{ControllerBehaviour, TransactionSenderBehaviour};
 use crate::display::Display;
 use crate::rest_api::common::{failure, success, CacheResult};
 use crate::util::{parse_addr, parse_data, parse_value};
-use crate::{ArrayLike, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{ArrayLike, Config, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use anyhow::Result;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
 use rocket::serde::json::Json;
+use rocket::State;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -40,7 +41,7 @@ pub struct CreateContract<'r> {
 
 #[derive(Component, Deserialize)]
 #[serde(crate = "rocket::serde")]
-#[component(example = json!({"to": "524268b46968103ce8323353dab16ae857f09a6f", "data": "0x", "value": "0x0", "quota": 1073741824}))]
+#[component(example = json!({"to": "524268b46968103ce8323353dab16ae857f09a6f", "data": "0x", "value": "0x0", "quota": 20000}))]
 pub struct SendTx<'r> {
     pub to: &'r str,
     pub data: Option<&'r str>,
@@ -146,8 +147,10 @@ request_body = CreateContract,
 pub async fn create(
     result: Json<CreateContract<'_>>,
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<Config>,
 ) -> Json<CacheResult<Value>> {
-    let account = Account::new(ctx.crypto.clone());
+    let address = parse_addr(config.account.as_str()).unwrap();
+    let account = Account::new(ctx.crypto.clone(), address);
     let tx = match get_contract_tx(result.0, ctx.controller.clone()).await {
         Ok(data) => data,
         Err(e) => return Json(failure(e)),
@@ -168,8 +171,10 @@ request_body = SendTx,
 pub async fn send_tx(
     result: Json<SendTx<'_>>,
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<Config>,
 ) -> Json<CacheResult<Value>> {
-    let account = Account::new(ctx.crypto.clone());
+    let address = parse_addr(config.account.as_str()).unwrap();
+    let account = Account::new(ctx.crypto.clone(), address);
 
     let raw_tx = match get_raw_tx(ctx.controller.clone(), result.0).await {
         Ok(data) => data,

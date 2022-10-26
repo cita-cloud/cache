@@ -13,19 +13,25 @@
 // limitations under the License.
 
 use crate::core::controller::SignerBehaviour;
-use crate::CryptoClient;
+use crate::crypto::Address;
+use crate::{ArrayLike, CryptoClient};
 
 pub struct Account {
     client: CryptoClient,
+    address: Address,
 }
 
 impl Account {
-    pub fn new(client: CryptoClient) -> Self {
-        Self { client }
+    pub fn new(client: CryptoClient, address: Address) -> Self {
+        Self { client, address }
     }
 }
 
 impl SignerBehaviour for Account {
+    fn address(&self) -> Vec<u8> {
+        self.address.to_vec()
+    }
+
     fn client(&self) -> CryptoClient {
         self.client.clone()
     }

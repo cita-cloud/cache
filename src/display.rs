@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::crypto::{Address, Hash};
+use crate::util::{display_time, hex};
 use cita_cloud_proto::{
     blockchain::{
         raw_transaction::Tx, Block, CompactBlock, RawTransaction, Transaction,
@@ -23,45 +24,10 @@ use cita_cloud_proto::{
     evm::{Balance, ByteAbi, ByteCode, Log, Nonce, Receipt},
     executor::CallResponse,
 };
-use crossbeam::atomic::AtomicCell;
-use rocket::time::UtcOffset;
 use serde_json::json;
 use serde_json::map::Map;
 use serde_json::Value as Json;
 use tentacle_multiaddr::{Multiaddr, Protocol};
-
-pub fn hex(data: &[u8]) -> String {
-    format!("0x{}", hex::encode(data))
-}
-
-static LOCAL_UTC_OFFSET: AtomicCell<Option<UtcOffset>> = AtomicCell::new(None);
-
-/// This should be called without any other concurrent running threads.
-pub fn init_local_utc_offset() {
-    let local_utc_offset =
-        UtcOffset::current_local_offset().unwrap_or_else(|_| UtcOffset::from_hms(8, 0, 0).unwrap());
-
-    LOCAL_UTC_OFFSET.store(Some(local_utc_offset));
-}
-
-/// Call init_utc_offset first without any other concurrent running threads. Otherwise UTC+8 is used.
-/// This is due to a potential race condition.
-/// [CVE-2020-26235](https://github.com/chronotope/chrono/issues/602)
-pub fn display_time(timestamp: u64) -> String {
-    let local_offset = LOCAL_UTC_OFFSET
-        .load()
-        .unwrap_or_else(|| UtcOffset::from_hms(8, 0, 0).unwrap());
-    let format = time::format_description::parse(
-        "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]",
-    )
-        .unwrap();
-    time::OffsetDateTime::from_unix_timestamp((timestamp / 1000) as i64)
-        .expect("invalid timestamp")
-        .to_offset(local_offset)
-        .format(&format)
-        .unwrap()
-}
-
 pub trait Display {
     fn to_json(&self) -> Json;
     fn display(&self) -> String {

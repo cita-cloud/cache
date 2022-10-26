@@ -76,10 +76,8 @@ impl EvmBehaviour for EvmClient {
         let hash = CloudHash {
             hash: hash.to_vec(),
         };
-        client
-            .get_transaction_receipt(hash)
-            .await
-            .context("failed to get receipt")
+        let receipt = client.get_transaction_receipt(hash).await?;
+        Ok(receipt)
     }
 
     async fn get_code(&self, addr: Address) -> Result<ByteCode> {

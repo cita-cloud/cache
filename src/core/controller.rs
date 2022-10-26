@@ -18,11 +18,10 @@ use anyhow::Result;
 
 use prost::Message;
 
-use crate::constant::ACCOUNT_ADDRESS;
 use crate::core::crypto::CryptoBehaviour;
 use crate::crypto::{ArrayLike, Hash};
 use crate::redis::{hset, zadd};
-use crate::util::{hash_to_tx, hex_without_0x, parse_addr, timestamp, uncommitted_tx_key};
+use crate::util::{hash_to_tx, hex_without_0x, timestamp, uncommitted_tx_key};
 use crate::CryptoClient;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
@@ -223,9 +222,7 @@ pub trait SignerBehaviour {
     async fn hash(&self, msg: Vec<u8>) -> Vec<u8> {
         self.client().hash_data(msg).await
     }
-    fn address(&self) -> Vec<u8> {
-        parse_addr(ACCOUNT_ADDRESS).unwrap().to_vec()
-    }
+    fn address(&self) -> Vec<u8>;
     async fn sign(&self, msg: Vec<u8>) -> Vec<u8> {
         self.client().sign_message(msg).await
     }

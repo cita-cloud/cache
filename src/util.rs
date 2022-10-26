@@ -14,8 +14,42 @@
 use crate::constant::{COMMITTED_TX, HASH_TO_RETRY, HASH_TO_TX, KEY_PREFIX, UNCOMMITTED_TX};
 use crate::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
+use crossbeam::atomic::AtomicCell;
 use std::num::ParseIntError;
 use std::time::{SystemTime, UNIX_EPOCH};
+use time::UtcOffset;
+
+static LOCAL_UTC_OFFSET: AtomicCell<Option<UtcOffset>> = AtomicCell::new(None);
+
+/// This should be called without any other concurrent running threads.
+pub fn init_local_utc_offset() {
+    let local_utc_offset =
+        UtcOffset::current_local_offset().unwrap_or_else(|_| UtcOffset::from_hms(8, 0, 0).unwrap());
+
+    LOCAL_UTC_OFFSET.store(Some(local_utc_offset));
+}
+
+/// Call init_utc_offset first without any other concurrent running threads. Otherwise UTC+8 is used.
+/// This is due to a potential race condition.
+/// [CVE-2020-26235](https://github.com/chronotope/chrono/issues/602)
+pub fn display_time(timestamp: u64) -> String {
+    let local_offset = LOCAL_UTC_OFFSET
+        .load()
+        .unwrap_or_else(|| UtcOffset::from_hms(8, 0, 0).unwrap());
+    let format = time::format_description::parse(
+        "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]",
+    )
+        .unwrap();
+    time::OffsetDateTime::from_unix_timestamp((timestamp / 1000) as i64)
+        .expect("invalid timestamp")
+        .to_offset(local_offset)
+        .format(&format)
+        .unwrap()
+}
+
+pub fn current_time() -> String {
+    display_time(timestamp())
+}
 
 pub fn remove_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
@@ -72,7 +106,7 @@ pub fn parse_sk<C: Crypto>(s: &str) -> Result<C::SecretKey> {
     C::SecretKey::try_from_slice(&input)
 }
 
-pub fn key(key_type: &str, param: &str) -> String {
+pub fn key(key_type: String, param: String) -> String {
     format!("{}_{}_{}", KEY_PREFIX, key_type, param)
 }
 
