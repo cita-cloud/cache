@@ -12,42 +12,66 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::io::Error;
+use std::u64;
 use anyhow::Context as Ctx;
-use utoipa::Component;
 
 use crate::context::Context;
 use crate::core::account::Account;
 use crate::core::controller::{ControllerBehaviour, TransactionSenderBehaviour};
 use crate::display::Display;
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::util::{parse_addr, parse_data, parse_value};
-use crate::{ArrayLike, Config, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
-use anyhow::Result;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
-use rocket::serde::json::Json;
 use rocket::State;
-use serde::Deserialize;
-use serde_json::Value;
+use crate::Config;
+use crate::util::{contract_key, hex, parse_addr, parse_data, parse_value};
+use crate::{ArrayLike, ControllerClient, CryptoClient, EvmClient, ExecutorClient, hex_without_0x, set};
+use anyhow::Result;
+use rocket::serde::json::Json;
+use serde::{Serialize, Deserialize};
+use serde_json::{Number, Value};
+use utoipa::{ToSchema};
+use crate::core::executor::ExecutorBehaviour;
+use crate::crypto::Address;
+use crate::redis::{con, load};
 
-#[derive(Component, Deserialize)]
-#[serde(crate = "rocket::serde")]
-#[component(example = json!({"data": "", "value": "0x0", "quota": 1073741824}))]
+
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
 pub struct CreateContract<'r> {
+    #[schema(example = "0x608060405234801561001057600080fd5b5060f58061001f6000396000f3006080604052600436106053576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806306661abd1460585780634f2be91f146080578063d826f88f146094575b600080fd5b348015606357600080fd5b50606a60a8565b6040518082815260200191505060405180910390f35b348015608b57600080fd5b50609260ae565b005b348015609f57600080fd5b5060a660c0565b005b60005481565b60016000808282540192505081905550565b600080819055505600a165627a7a72305820faa1d1f51d7b5ca2b200e0f6cdef4f2d7e44ee686209e300beb1146f40d32dee0029")]
     pub data: &'r str,
+    #[schema(example = "0x0")]
     pub value: Option<&'r str>,
+    #[schema(example = 30000)]
     pub quota: Option<u64>,
+    #[deprecated]
     pub valid_until_block: Option<i64>,
 }
 
-#[derive(Component, Deserialize)]
-#[serde(crate = "rocket::serde")]
-#[component(example = json!({"to": "524268b46968103ce8323353dab16ae857f09a6f", "data": "0x", "value": "0x0", "quota": 20000}))]
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
 pub struct SendTx<'r> {
+    #[schema(example = "524268b46968103ce8323353dab16ae857f09a6f")]
     pub to: &'r str,
+    #[schema(example = "0x")]
     pub data: Option<&'r str>,
+    #[schema(example = "0x0")]
     pub value: Option<&'r str>,
+    #[schema(example = 30000)]
     pub quota: Option<u64>,
+    #[deprecated]
     pub valid_until_block: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
+pub struct Call<'r> {
+    #[deprecated]
+    pub from: Option<&'r str>,
+    #[schema(example = "b3eefbf4e5280217da74b83f316c5711827933a0")]
+    pub to: &'r str,
+    #[schema(example = "0x06661abd")]
+    pub data: &'r str,
+    #[deprecated]
+    pub height: Option<u64>,
 }
 
 async fn get_contract_tx(
@@ -149,7 +173,10 @@ pub async fn create(
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
     config: &State<Config>,
 ) -> Json<CacheResult<Value>> {
-    let address = parse_addr(config.account.as_str()).unwrap();
+    let address = match parse_addr(config.account.as_str()) {
+        Ok(address) => address,
+        Err(e) => return Json(failure(e)),
+    };
     let account = Account::new(ctx.crypto.clone(), address);
     let tx = match get_contract_tx(result.0, ctx.controller.clone()).await {
         Ok(data) => data,
@@ -173,7 +200,10 @@ pub async fn send_tx(
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
     config: &State<Config>,
 ) -> Json<CacheResult<Value>> {
-    let address = parse_addr(config.account.as_str()).unwrap();
+    let address = match parse_addr(config.account.as_str()) {
+        Ok(address) => address,
+        Err(e) => return Json(failure(e)),
+    };
     let account = Account::new(ctx.crypto.clone(), address);
 
     let raw_tx = match get_raw_tx(ctx.controller.clone(), result.0).await {
@@ -184,4 +214,46 @@ pub async fn send_tx(
         Ok(data) => Json(success(Value::String(data.display()))),
         Err(e) => Json(failure(e)),
     }
+}
+
+fn call_param(result: Call<'_>, config: &State<Config>) -> Result<(Address, Address, Vec<u8>, u64)> {
+    let from = parse_addr(config.account.as_str())?;
+    let to = parse_addr(result.to)?;
+    let data = parse_data(result.data)?;
+    let height = result.height.unwrap_or(0);
+    Ok((from, to, data, height))
+}
+
+///Call
+#[post("/call", data = "<result>")]
+#[utoipa::path(
+path = "/api/call",
+post,
+request_body = Call,
+)]
+pub async fn call(
+    result: Json<Call<'_>>,
+    ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<Config>,
+) -> Json<CacheResult<Value>> {
+    let key = contract_key(result.to.to_string(), result.data.to_string(), result.height.unwrap_or(0));
+    match load(key.clone()) {
+        Ok(data) => if data != String::default() {
+            return Json(success(Value::String(data)));
+        },
+        Err(e) => return Json(failure(anyhow::Error::from(e))),
+    };
+    let (from, to, data, height) = match call_param(result.0, config) {
+        Ok(data) => data,
+        Err(e) => return Json(failure(e)),
+    };
+    match ctx.executor.call(from, to, data, height).await {
+        Ok(data) => {
+            let val = hex(data.value.as_slice());
+            set(key, val.clone()).unwrap();
+            Json(success(Value::String(val)))
+        },
+        Err(e) => Json(failure(e)),
+    }
+
 }

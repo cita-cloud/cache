@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use crate::constant::{COMMITTED_TX, HASH_TO_RETRY, HASH_TO_TX, KEY_PREFIX, UNCOMMITTED_TX};
+use crate::constant::{COMMITTED_TX, CONTRACT_KEY, HASH_TO_RETRY, HASH_TO_TX, KEY_PREFIX, UNCOMMITTED_TX};
 use crate::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
 use crossbeam::atomic::AtomicCell;
@@ -128,6 +128,10 @@ pub fn hash_to_tx() -> String {
 
 pub fn hash_to_retry() -> String {
     format!("{}_{}", KEY_PREFIX, HASH_TO_RETRY)
+}
+
+pub fn contract_key(to: String, data: String, height: u64) -> String {
+    format!("{}_{}_{}_{}_{}", KEY_PREFIX, CONTRACT_KEY, to, data, height)
 }
 
 pub fn timestamp() -> u64 {

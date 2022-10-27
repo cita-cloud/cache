@@ -15,7 +15,7 @@
 extern crate rocket;
 
 use crate::context::Context;
-use crate::rest_api::common::CacheResult;
+use crate::rest_api::common::{CacheResult, success};
 use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use rocket::serde::json::Json;
 use serde_json::Value;
@@ -36,7 +36,7 @@ pub async fn block_number(
 get,
 path = "/api/get-abi/{address}",
 params(
-("address" = String, path, description = "The contract address"),
+("address", description = "The contract address"),
 )
 )]
 pub async fn abi(
@@ -54,7 +54,7 @@ pub async fn abi(
 get,
 path = "/api/get-balance/{address}",
 params(
-("address" = String, path, description = "The account address"),
+("address", description = "The account address"),
 )
 )]
 pub async fn balance(
@@ -72,7 +72,7 @@ pub async fn balance(
 get,
 path = "/api/get-block/{hash_or_height}",
 params(
-("hash_or_height" = String, path, description = "The block hash or height"),
+("hash_or_height", description = "The block hash or height"),
 )
 )]
 pub async fn block(
@@ -90,7 +90,7 @@ pub async fn block(
 get,
 path = "/api/get-code/{address}",
 params(
-("address" = String, path, description = "The contract address"),
+("address", description = "The contract address"),
 )
 )]
 pub async fn code(
@@ -108,7 +108,7 @@ pub async fn code(
 get,
 path = "/api/get-tx/{hash}",
 params(
-("hash" = String, path, description = "The tx hash"),
+("hash", description = "The tx hash"),
 )
 )]
 pub async fn tx(
@@ -146,7 +146,7 @@ pub async fn peers_info(
 get,
 path = "/api/get-account-nonce/{address}",
 params(
-("address" = String, path, description = "The account address"),
+("address", description = "The account address"),
 )
 )]
 pub async fn account_nonce(
@@ -164,7 +164,7 @@ pub async fn account_nonce(
 get,
 path = "/api/get-receipt/{hash}",
 params(
-("hash" = String, path, description = "The tx hash"),
+("hash", description = "The tx hash"),
 )
 )]
 pub async fn receipt(
@@ -202,7 +202,7 @@ pub async fn system_config(
 get,
 path = "/api/get-block-hash/{block_number}",
 params(
-("block_number" = usize, path, description = "The block number"),
+("block_number", description = "The block number"),
 )
 )]
 pub async fn block_hash(
@@ -213,3 +213,4 @@ pub async fn block_hash(
     println!("get-block-hash block_number {}", block_number);
     Json(result)
 }
+

@@ -3,10 +3,10 @@ use crate::rest_api::get::*;
 use crate::rest_api::post::*;
 use anyhow::Error;
 use rocket::serde::json::Json;
-use rocket::serde::Serialize;
+// use rocket::serde::Serialize;
+use serde::{Serialize, Deserialize};
 use serde_json::Value;
-use utoipa::Component;
-use utoipa::OpenApi;
+use utoipa::{OpenApi, ToSchema};
 
 #[catch(404)]
 pub fn uri_not_found() -> Json<String> {
@@ -20,7 +20,6 @@ pub fn api_not_found() -> Json<String> {
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
-#[derive(Component)]
 pub struct CacheResult<T> {
     pub status: u64,
     pub data: Option<T>,
@@ -35,6 +34,7 @@ pub fn success<T>(data: T) -> CacheResult<T> {
     }
 }
 
+
 pub fn failure(e: Error) -> CacheResult<Value> {
     CacheResult {
         status: FAILURE,
@@ -43,27 +43,25 @@ pub fn failure(e: Error) -> CacheResult<Value> {
     }
 }
 
-#[derive(Serialize)]
-#[serde(crate = "rocket::serde")]
-#[derive(Component)]
-#[component(example = json ! ({"status": 1, "message": "success"}))]
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
 pub struct SuccessResult {
+    #[schema(example = 1)]
     pub status: u64,
+    #[schema(example = "success")]
     pub message: String,
 }
 
-#[derive(Serialize)]
-#[serde(crate = "rocket::serde")]
-#[derive(Component)]
-#[component(example = json ! ({"status": 0, "message": "error message"}))]
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
 pub struct FailureResult {
+    #[schema(example = 0)]
     pub status: u64,
+    #[schema(example = "error message")]
     pub message: String,
 }
 
 #[derive(OpenApi)]
 #[openapi(
-handlers(
+paths(
 block_number,
 abi,
 balance,
@@ -77,9 +75,12 @@ receipt,
 system_config,
 block_hash,
 version,
+call,
 create,
 send_tx,
 ),
-components(SuccessResult, FailureResult, CreateContract<'_>, SendTx<'_>)
+components(
+schemas(SuccessResult, FailureResult, CreateContract<'_>, SendTx<'_>, Call<'_>)
+)
 )]
 pub struct ApiDoc;

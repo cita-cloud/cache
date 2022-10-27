@@ -47,8 +47,8 @@ use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
     receipt, system_config, tx, version,
 };
-use rest_api::post::{create, send_tx};
 use rocket::fairing::AdHoc;
+use rest_api::post::{create, send_tx, call,};
 use rocket::form::validate::Contains;
 use rocket::{routes, Build, Rocket};
 use serde::Deserialize;
@@ -81,6 +81,7 @@ fn rocket() -> Rocket<Build> {
                 system_config,
                 block_hash,
                 version,
+                call,
                 create,
                 send_tx,
             ],

@@ -23,3 +23,4 @@ pub const HASH_TO_TX: &str = "hash_to_tx";
 pub const HASH_TO_RETRY: &str = "hash_to_retry";
 pub const RECEIPT: &str = "receipt";
 pub const TX: &str = "tx";
+pub const CONTRACT_KEY: &str = "contract";
