@@ -28,6 +28,46 @@ apiVersion: v1
 kind: ConfigMap
 data:
   config.toml: "[network_p2p]\ngrpc_port = 50000\nport = 40000\n\n[[network_p2p.peers]]\naddress = '/dns4/new-raft-chain-node0-nodeport/tcp/40000'\n\n[consensus_raft]\ncontroller_port = 50004\ngrpc_listen_port = 50001\nnetwork_port = 50000\nnode_addr = 'ed12000856d539369d01ffe7fc6ba2e74d6edc5f'\n\n[executor_evm]\nexecutor_port = 50002\n\n[storage_rocksdb]\ncrypto_port = 50005\nstorage_port = 50003\n\n[genesis_block]\nprevhash = '0x0000000000000000000000000000000000000000000000000000000000000000'\ntimestamp = 1661159376223\n\n[system_config]\nadmin = '0a385280b399ccb341c566ee78fa0b82d29093dd'\nblock_interval = 3\nblock_limit = 100\nchain_id = '1cf680c622e808c9eb1f3dbeca3a8da5fe8d7ead0c32652bc6b9668fbbb62d32'\nvalidators = [\n       'ed12000856d539369d01ffe7fc6ba2e74d6edc5f',\n]\nversion = 0\n\n[controller]\nconsensus_port = 50001\ncontroller_port = 50004\ncrypto_port = 50005\nexecutor_port = 50002\nnetwork_port = 50000\nnode_address = 'ed12000856d539369d01ffe7fc6ba2e74d6edc5f'\nquota_limit = 30000000\nstorage_port = 50003\nvalidator_address_len = 20\n\n[crypto_sm]\ncrypto_port = 50005\n\n"
+  Cache.toml: '''
+[default]
+port = 8000
+limits = { json = "10MiB" }
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+timing_internal_sec = 1
+timing_batch = 50
+account = "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7"
+
+[debug]
+port = 8000
+limits = { json = "10MiB" }
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+timing_internal_sec = 1
+timing_batch = 100
+
+[test]
+port = 8000
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+timing_internal_sec = 1
+timing_batch = 100
+
+[release]
+port = 9001
+controller_addr = "http://127.0.0.1:50004"
+executor_addr = "http://127.0.0.1:50002"
+crypto_addr = "http://127.0.0.1:50005"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+timing_internal_sec = 1
+timing_batch = 100
+'''
 metadata:
   labels:
     app.kubernetes.io/chain-name: new-cache-chain
@@ -350,11 +390,15 @@ spec:
           volumeMounts:
             - mountPath: /data
               name: datadir
+            - mountPath: /etc/cita-cloud/config
+              name: node-config
             - mountPath: /redis-config
               name: config
           workingDir: /data
         - command:
-            - ROCKET_CONFIG=Cache.toml;ROCKET_PROFILE=test;ROCKET_ACCOUNT=757ca1c731a3d7e9bdbd0e22ee65918674a77bd7 cache
+            - /bin/sh
+            - "-c"
+            - "ROCKET_CONFIG=/etc/cita-cloud/config/Cache.toml;ROCKET_PROFILE=test;ROCKET_ACCOUNT=757ca1c731a3d7e9bdbd0e22ee65918674a77bd7 cache"
           name: cache
           image: "docker.io/citacloud/cache:latest"
           imagePullPolicy: Always
