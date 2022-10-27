@@ -11,7 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use crate::constant::{COMMITTED_TX, CONTRACT_KEY, HASH_TO_RETRY, HASH_TO_TX, KEY_PREFIX, UNCOMMITTED_TX};
+use crate::constant::{
+    COMMITTED_TX, CONTRACT_KEY, HASH_TO_BLOCK_NUMBER, HASH_TO_RETRY_HASH, HASH_TO_TX, HASH_TYPE,
+    KEY_PREFIX, UNCOMMITTED_TX, VAL_TYPE, ZSET_TYPE,
+};
 use crate::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
 use crossbeam::atomic::AtomicCell;
@@ -107,31 +110,42 @@ pub fn parse_sk<C: Crypto>(s: &str) -> Result<C::SecretKey> {
 }
 
 pub fn key(key_type: String, param: String) -> String {
-    format!("{}_{}_{}", KEY_PREFIX, key_type, param)
+    format!("{}:{}:{}:{}", KEY_PREFIX, VAL_TYPE, key_type, param)
 }
 
 pub fn key_without_param(key_type: &str) -> String {
-    format!("{}_{}", KEY_PREFIX, key_type)
+    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, key_type)
 }
 
 pub fn uncommitted_tx_key() -> String {
-    format!("{}_{}", KEY_PREFIX, UNCOMMITTED_TX)
+    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, UNCOMMITTED_TX)
 }
 
 pub fn committed_tx_key() -> String {
-    format!("{}_{}", KEY_PREFIX, COMMITTED_TX)
+    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, COMMITTED_TX)
 }
 
 pub fn hash_to_tx() -> String {
-    format!("{}_{}", KEY_PREFIX, HASH_TO_TX)
+    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_TX)
 }
 
 pub fn hash_to_retry() -> String {
-    format!("{}_{}", KEY_PREFIX, HASH_TO_RETRY)
+    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_RETRY_HASH)
+}
+
+pub fn hash_to_block_number() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_BLOCK_NUMBER)
+}
+
+pub fn contract_pattern(to: String) -> String {
+    format!("{}:{}:{}:{}*", KEY_PREFIX, VAL_TYPE, CONTRACT_KEY, to)
 }
 
 pub fn contract_key(to: String, data: String, height: u64) -> String {
-    format!("{}_{}_{}_{}_{}", KEY_PREFIX, CONTRACT_KEY, to, data, height)
+    format!(
+        "{}:{}:{}:{}:{}:{}",
+        KEY_PREFIX, VAL_TYPE, CONTRACT_KEY, to, data, height
+    )
 }
 
 pub fn timestamp() -> u64 {

@@ -15,7 +15,7 @@
 extern crate rocket;
 
 use crate::context::Context;
-use crate::rest_api::common::{CacheResult, success};
+use crate::rest_api::common::CacheResult;
 use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use rocket::serde::json::Json;
 use serde_json::Value;
@@ -213,4 +213,3 @@ pub async fn block_hash(
     println!("get-block-hash block_number {}", block_number);
     Json(result)
 }
-

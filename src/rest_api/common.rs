@@ -4,7 +4,7 @@ use crate::rest_api::post::*;
 use anyhow::Error;
 use rocket::serde::json::Json;
 // use rocket::serde::Serialize;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{OpenApi, ToSchema};
 
@@ -33,7 +33,6 @@ pub fn success<T>(data: T) -> CacheResult<T> {
         message: SUCCESS_MESSAGE.to_string(),
     }
 }
-
 
 pub fn failure(e: Error) -> CacheResult<Value> {
     CacheResult {
