@@ -26,18 +26,18 @@ mod util;
 
 use crate::constant::{RECEIPT, TX};
 use crate::context::Context;
-use crate::core::account::Account;
-use crate::core::controller::{ControllerBehaviour, ControllerClient, TransactionSenderBehaviour};
+use crate::core::controller::{ControllerBehaviour, ControllerClient};
 use crate::core::crypto::CryptoClient;
 use crate::core::evm::{EvmBehaviour, EvmClient};
 use crate::core::executor::ExecutorClient;
-use crate::crypto::{Address, ArrayLike, Hash};
+use crate::crypto::{ArrayLike, Hash};
 use crate::display::Display;
-use crate::redis::{hdel, hget, hset, pool, set, zadd, zrange, zrange_withscores, zrem};
-use crate::rest_api::post::new_raw_tx;
+use crate::redis::{
+    delete, hdel, hget, hset, keys, pool, set, zadd, zrange, zrange_withscores, zrem,
+};
 use crate::util::{
-    committed_tx_key, current_time, hash_to_retry, hash_to_tx, hex_without_0x,
-    init_local_utc_offset, key, parse_addr, parse_data, uncommitted_tx_key,
+    committed_tx_key, contract_pattern, current_time, hash_to_block_number, hash_to_retry,
+    hash_to_tx, hex_without_0x, init_local_utc_offset, key, parse_data, uncommitted_tx_key,
 };
 use anyhow::{Error, Result};
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
@@ -47,9 +47,8 @@ use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
     receipt, system_config, tx, version,
 };
-use rest_api::post::{create, send_tx};
+use rest_api::post::{call, create, send_tx};
 use rocket::fairing::AdHoc;
-use rocket::form::validate::Contains;
 use rocket::{routes, Build, Rocket};
 use serde::Deserialize;
 use tokio::time;
@@ -81,6 +80,7 @@ fn rocket() -> Rocket<Build> {
                 system_config,
                 block_hash,
                 version,
+                call,
                 create,
                 send_tx,
             ],
@@ -89,136 +89,158 @@ fn rocket() -> Rocket<Build> {
         .register("/api", catchers![api_not_found])
 }
 
-async fn commit_tx(
+async fn commit_tx_schedule(
     timing_internal_sec: u64,
-    address: Address,
     timing_batch: isize,
     controller: ControllerClient,
-    crypto: CryptoClient,
-) -> Result<()> {
+) {
     let mut internal = time::interval(time::Duration::from_secs(timing_internal_sec));
     loop {
         internal.tick().await;
-        let members = zrange_withscores::<String>(uncommitted_tx_key(), 0, timing_batch)?;
-        for (tx_hash, score) in members {
-            let real_hash = if let Ok(new_hash) = hget(hash_to_retry(), tx_hash.clone()) {
-                new_hash
-            } else {
-                tx_hash.clone()
-            };
-            let tx = match hget(hash_to_tx(), real_hash.clone()) {
-                Ok(data) => data,
-                Err(e) => {
-                    warn!(
-                        "[{}] hget hkey: {}, key: {}, error: {}",
-                        current_time(),
-                        hash_to_tx(),
-                        real_hash.clone(),
-                        e
-                    );
-                    return Err(Error::from(e));
-                }
-            };
-            let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str()).unwrap()[..])?;
-            match controller.send_raw(decoded.clone()).await {
-                Ok(data) => {
-                    zrem(uncommitted_tx_key(), tx_hash.clone())?;
-                    zadd(committed_tx_key(), tx_hash.clone(), score)?;
-                    let hash_str = hex_without_0x(&data);
-                    info!("[{}] commit tx success, hash: {}", current_time(), hash_str);
-                }
-                Err(e) => {
-                    let err_str = format!("{}", e);
-                    if err_str.contains("InvalidValidUntilBlock") {
-                        zadd(uncommitted_tx_key(), tx_hash.clone(), score)?;
-                        if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
-                            let raw_tx =
-                                new_raw_tx(controller.clone(), normal_tx.transaction.unwrap())
-                                    .await?;
-                            let data = controller
-                                .send_raw_tx(&Account::new(crypto.clone(), address), raw_tx.clone())
-                                .await?;
-                            let hash = hex_without_0x(data.as_slice());
-                            hset(hash_to_retry(), tx_hash.clone(), hash.clone())?;
-                            //avoid dup operation of a tx
-                            zrem(uncommitted_tx_key(), hash.clone())?;
-                            info!("[{}] recommit tx, new hash: {}", current_time(), hash);
-                            continue;
-                        }
-                    }
-                    let empty = Vec::new();
-                    let hash = match decoded.tx {
-                        Some(Tx::NormalTx(ref normal_tx)) => &normal_tx.transaction_hash,
-                        Some(Tx::UtxoTx(ref utxo_tx)) => &utxo_tx.transaction_hash,
-                        None => empty.as_slice(),
-                    };
-                    let hash = hex_without_0x(hash).to_string();
-                    set(key(RECEIPT.to_string(), hash.clone()), err_str.clone())?;
-                    set(key(TX.to_string(), hash.clone()), err_str)?;
-                    zrem(uncommitted_tx_key(), tx_hash.clone())?;
-                    warn!("[{}] commit tx fail, hash: {}", current_time(), hash);
-                }
-            }
+        if let Err(e) = commit_tx(timing_batch, controller.clone()).await {
+            warn!("commit tx error: {}", e);
         }
     }
 }
 
-async fn check_tx(
+async fn commit_tx(timing_batch: isize, controller: ControllerClient) -> Result<()> {
+    let members = zrange_withscores::<String>(uncommitted_tx_key(), 0, timing_batch)?;
+    for (tx_hash, score) in members {
+        let tx = match hget::<String>(hash_to_tx(), tx_hash.clone()) {
+            Ok(data) => data,
+            Err(e) => {
+                warn!(
+                    "[{}] hget hkey: {}, key: {}, error: {}",
+                    current_time(),
+                    hash_to_tx(),
+                    tx_hash.clone(),
+                    e
+                );
+                return Err(Error::from(e));
+            }
+        };
+        let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str())?[..])?;
+        match controller.send_raw(decoded.clone()).await {
+            Ok(data) => {
+                zrem(uncommitted_tx_key(), tx_hash.clone())?;
+                zadd(committed_tx_key(), tx_hash.clone(), score)?;
+                let hash_str = hex_without_0x(&data);
+                info!("[{}] commit tx success, hash: {}", current_time(), hash_str);
+            }
+            Err(e) => {
+                let err_str = format!("{}", e);
+                let empty = Vec::new();
+                let hash = if let Some(Tx::NormalTx(ref normal_tx)) = decoded.tx {
+                    &normal_tx.transaction_hash
+                } else {
+                    empty.as_slice()
+                };
+                let hash = hex_without_0x(hash).to_string();
+                zrem(uncommitted_tx_key(), tx_hash.clone())?;
+                set(key(RECEIPT.to_string(), hash.clone()), err_str.clone())?;
+                set(key(TX.to_string(), hash.clone()), err_str)?;
+                warn!("[{}] commit tx fail, hash: {}", current_time(), hash);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn clean_key(tx_hash: String) -> Result<()> {
+    zrem(committed_tx_key(), tx_hash.clone())?;
+    zrem(uncommitted_tx_key(), tx_hash.clone())?;
+    hdel(hash_to_tx(), tx_hash.clone())?;
+    hdel(hash_to_block_number(), tx_hash)?;
+    Ok(())
+}
+
+async fn check_tx(timing_batch: isize, controller: ControllerClient, evm: EvmClient) -> Result<()> {
+    let members = zrange::<String>(committed_tx_key(), 0, timing_batch)?;
+    for tx_hash in members {
+        let hash = Hash::try_from_slice(&parse_data(tx_hash.clone().as_str()).unwrap()[..])?;
+        match evm.get_receipt(hash).await {
+            Ok(receipt) => {
+                set(key(RECEIPT.to_string(), tx_hash.clone()), receipt.display())?;
+                info!(
+                    "[{}] get tx receipt and save success, hash: {}",
+                    current_time(),
+                    tx_hash.clone()
+                );
+                match controller.get_tx(hash).await {
+                    Ok(tx) => {
+                        set(key(TX.to_string(), tx_hash.clone()), tx.display())?;
+                        info!(
+                            "[{}] get tx and save success, hash: {}",
+                            current_time(),
+                            tx_hash.clone()
+                        );
+                    }
+                    Err(e) => {
+                        set(key(TX.to_string(), tx_hash.clone()), format!("{}", e))?;
+                        info!(
+                            "[{}] retry get tx, hash: {}",
+                            current_time(),
+                            tx_hash.clone()
+                        );
+                    }
+                }
+
+                let tx = hget::<String>(hash_to_tx(), tx_hash.clone())?;
+                let decoded: RawTransaction = Message::decode(parse_data(tx.as_str())?.as_slice())?;
+                if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
+                    if let Some(transaction) = normal_tx.transaction {
+                        let to_addr = transaction.to;
+                        let addr = hex_without_0x(&to_addr);
+                        let pattern = contract_pattern(addr);
+                        if let Ok(list) = keys::<String>(pattern) {
+                            if !list.is_empty() {
+                                delete(list)?;
+                            }
+                        }
+                    }
+                }
+                clean_key(tx_hash.clone()).await?;
+                continue;
+            }
+            Err(e) => {
+                set(key(RECEIPT.to_string(), tx_hash.clone()), format!("{}", e))?;
+                info!(
+                    "[{}] retry -> get receipt, hash: {}",
+                    current_time(),
+                    tx_hash.clone()
+                );
+            }
+        }
+        let current = controller.get_block_number(false).await?;
+        let config = controller.get_system_config().await?;
+        let valid_until_block = hget::<u64>(hash_to_block_number(), tx_hash.clone())?;
+        if valid_until_block <= current || valid_until_block > (current + config.block_limit as u64)
+        {
+            warn!(
+                "[{}] retry -> get receipt, timeout hash: {}",
+                current_time(),
+                tx_hash.clone()
+            );
+            set(
+                key(RECEIPT.to_string(), tx_hash.clone()),
+                "timeout".to_string(),
+            )?;
+            clean_key(tx_hash).await?
+        }
+    }
+    Ok(())
+}
+async fn check_tx_schedule(
     timing_internal_sec: u64,
     timing_batch: isize,
     controller: ControllerClient,
     evm: EvmClient,
-) -> Result<()> {
+) {
     let mut internal = time::interval(time::Duration::from_secs(2 * timing_internal_sec));
     loop {
         internal.tick().await;
-        let members = zrange::<String>(committed_tx_key(), 0, timing_batch)?;
-        for tx_hash in members {
-            let real_hash = if let Ok(new_hash) = hget(hash_to_retry(), tx_hash.clone()) {
-                new_hash
-            } else {
-                tx_hash.clone()
-            };
-            let hash = Hash::try_from_slice(&parse_data(real_hash.as_str()).unwrap()[..])?;
-            match evm.get_receipt(hash).await {
-                Ok(receipt) => {
-                    set(key(RECEIPT.to_string(), tx_hash.clone()), receipt.display())?;
-                    info!(
-                        "[{}] get tx receipt and save success, hash: {}",
-                        current_time(),
-                        tx_hash.clone()
-                    );
-                    match controller.get_tx(hash).await {
-                        Ok(tx) => {
-                            set(key(TX.to_string(), tx_hash.clone()), tx.display())?;
-                            info!(
-                                "[{}] get tx and save success, hash: {}",
-                                current_time(),
-                                tx_hash.clone()
-                            );
-                        }
-                        Err(e) => {
-                            set(key(TX.to_string(), tx_hash.clone()), format!("{}", e))?;
-                            info!(
-                                "[{}] retry get tx, hash: {}",
-                                current_time(),
-                                tx_hash.clone()
-                            );
-                        }
-                    }
-                    zrem(committed_tx_key(), tx_hash.clone())?;
-                    zrem(uncommitted_tx_key(), tx_hash.clone())?;
-                    hdel(hash_to_tx(), tx_hash)?;
-                }
-                Err(e) => {
-                    set(key(RECEIPT.to_string(), tx_hash.clone()), format!("{}", e))?;
-                    info!(
-                        "[{}] retry -> get receipt, hash: {}",
-                        current_time(),
-                        tx_hash.clone()
-                    );
-                }
-            }
+        if let Err(e) = check_tx(timing_batch, controller.clone(), evm.clone()).await {
+            warn!("check tx error: {}", e);
         }
     }
 }
@@ -256,17 +278,14 @@ async fn main() {
             .redis_addr
             .unwrap_or_else(|| "redis://default:rivtower@127.0.0.1:6379".to_string()),
     );
-    let address = parse_addr(config.account.as_str()).unwrap();
     let timing_internal_sec = config.timing_internal_sec.unwrap_or(1);
     let timing_batch = config.timing_batch.unwrap_or(100) as isize;
-    tokio::spawn(commit_tx(
+    tokio::spawn(commit_tx_schedule(
         timing_internal_sec,
-        address,
         timing_batch,
         ctx.controller.clone(),
-        ctx.crypto.clone(),
     ));
-    tokio::spawn(check_tx(
+    tokio::spawn(check_tx_schedule(
         timing_internal_sec,
         timing_batch,
         ctx.controller.clone(),

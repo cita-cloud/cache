@@ -148,7 +148,7 @@ async fn result(
     param: String,
 ) -> Result<CacheResult<Value>> {
     let (key, param) = match pattern {
-        "receipt" | "tx" => match hget(hash_to_retry(), param.clone()) {
+        "receipt" | "tx" => match hget::<String>(hash_to_retry(), param.clone()) {
             Ok(value) => (key(pattern.to_string(), value.clone()), value),
             Err(e) => {
                 println!(

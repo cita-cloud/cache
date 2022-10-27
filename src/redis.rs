@@ -16,7 +16,9 @@ extern crate rocket;
 use r2d2::PooledConnection;
 use r2d2_redis::redis::{Commands, FromRedisValue, ToRedisArgs};
 use r2d2_redis::RedisConnectionManager;
+use std::collections::HashSet;
 use std::fmt::Display;
+use std::hash::Hash;
 use tokio::sync::OnceCell;
 
 pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
@@ -59,19 +61,40 @@ pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
 }
 
 #[allow(dead_code)]
-pub fn delete(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
+pub fn delete<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    key: T,
+) -> Result<u64, r2d2_redis::redis::RedisError> {
     con().del(key)
 }
 
-pub fn hset(hkey: String, key: String, val: String) -> Result<u64, r2d2_redis::redis::RedisError> {
-    con().hset::<String, String, String, u64>(hkey, key, val)
+pub fn hset<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    hkey: String,
+    key: String,
+    val: T,
+) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con().hset::<String, String, T, u64>(hkey, key, val)
 }
 
-pub fn hget<T: Clone + Default + ToRedisArgs + Display>(
+pub fn hget<T: Clone + Default + ToRedisArgs + Display + FromRedisValue>(
+    hkey: String,
+    key: String,
+) -> Result<T, r2d2_redis::redis::RedisError> {
+    con().hget(hkey, key)
+}
+
+#[allow(dead_code)]
+pub fn hvals<T: Clone + Default + ToRedisArgs + Display + FromRedisValue + Eq + Hash>(
+    hkey: String,
+) -> Result<HashSet<T>, r2d2_redis::redis::RedisError> {
+    con().hvals(hkey)
+}
+
+#[allow(dead_code)]
+pub fn hexists<T: Clone + Default + ToRedisArgs + Display>(
     hkey: String,
     key: T,
-) -> Result<String, r2d2_redis::redis::RedisError> {
-    con().hget(hkey, key)
+) -> Result<bool, r2d2_redis::redis::RedisError> {
+    con().hexists(hkey, key)
 }
 
 #[allow(dead_code)]
@@ -118,4 +141,26 @@ pub fn zrange_withscores<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     stop: isize,
 ) -> Result<Vec<(T, u64)>, r2d2_redis::redis::RedisError> {
     con().zrange_withscores(zkey, start, stop)
+}
+
+#[allow(dead_code)]
+pub fn sadd<T: Clone + Default + ToRedisArgs + FromRedisValue>(
+    key: String,
+    member: T,
+) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con().sadd(key, member)
+}
+
+#[allow(dead_code)]
+pub fn sismember<T: Clone + Default + ToRedisArgs + FromRedisValue>(
+    key: String,
+    member: T,
+) -> Result<bool, r2d2_redis::redis::RedisError> {
+    con().sismember(key, member)
+}
+
+pub fn keys<T: Clone + Default + ToRedisArgs + FromRedisValue>(
+    pattern: String,
+) -> Result<Vec<T>, r2d2_redis::redis::RedisError> {
+    con().keys(pattern)
 }
