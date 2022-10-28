@@ -24,7 +24,7 @@ use crate::display::Display;
 use crate::error::CacheError;
 use crate::redis::{load, set};
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{hash_to_retry, hget, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use anyhow::Result;
 use rocket::http::Method::Get;
 use rocket::http::Status;
@@ -147,21 +147,7 @@ async fn result(
     pattern: &str,
     param: String,
 ) -> Result<CacheResult<Value>> {
-    let (key, param) = match pattern {
-        "receipt" | "tx" => match hget::<String>(hash_to_retry(), param.clone()) {
-            Ok(value) => (key(pattern.to_string(), value.clone()), value),
-            Err(e) => {
-                println!(
-                    "hget hkey:{}, key:{}, err_msg: {:?}",
-                    hash_to_retry(),
-                    param.clone(),
-                    e
-                );
-                (key(pattern.to_string(), param.clone()), param)
-            }
-        },
-        _ => (key(pattern.to_string(), param.clone()), param),
-    };
+    let (key, param) = (key(pattern.to_string(), param.clone()), param);
     let val = load(key.clone())?;
     if val == String::default() {
         let data = get_and_save(ctx, pattern, param, key.clone()).await?;

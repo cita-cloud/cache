@@ -56,7 +56,7 @@ pub struct CreateContract<'r> {
 pub struct SendTx<'r> {
     #[schema(example = "524268b46968103ce8323353dab16ae857f09a6f")]
     pub to: &'r str,
-    #[schema(example = "0x")]
+    #[schema(example = "0x4f2be91f")]
     pub data: Option<&'r str>,
     #[schema(example = "0x0")]
     pub value: Option<&'r str>,
