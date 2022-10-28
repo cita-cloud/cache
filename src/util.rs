@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use crate::constant::{
-    COMMITTED_TX, CONTRACT_KEY, HASH_TO_BLOCK_NUMBER, HASH_TO_RETRY_HASH, HASH_TO_TX, HASH_TYPE,
-    KEY_PREFIX, UNCOMMITTED_TX, VAL_TYPE, ZSET_TYPE,
+    COMMITTED_TX, CONTRACT_KEY, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE, KEY_PREFIX,
+    UNCOMMITTED_TX, VAL_TYPE, ZSET_TYPE,
 };
 use crate::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
@@ -127,10 +127,6 @@ pub fn committed_tx_key() -> String {
 
 pub fn hash_to_tx() -> String {
     format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_TX)
-}
-
-pub fn hash_to_retry() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_RETRY_HASH)
 }
 
 pub fn hash_to_block_number() -> String {

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod cache_log;
 mod constant;
 mod context;
 mod core;
@@ -24,6 +25,7 @@ mod redis;
 mod rest_api;
 mod util;
 
+use crate::cache_log::LOGGER;
 use crate::constant::{RECEIPT, TX};
 use crate::context::Context;
 use crate::core::controller::{ControllerBehaviour, ControllerClient};
@@ -36,11 +38,13 @@ use crate::redis::{
     delete, hdel, hget, hset, keys, pool, set, zadd, zrange, zrange_withscores, zrem,
 };
 use crate::util::{
-    committed_tx_key, contract_pattern, current_time, hash_to_block_number, hash_to_retry,
-    hash_to_tx, hex_without_0x, init_local_utc_offset, key, parse_data, uncommitted_tx_key,
+    committed_tx_key, contract_pattern, current_time, hash_to_block_number, hash_to_tx,
+    hex_without_0x, init_local_utc_offset, key, parse_data, uncommitted_tx_key,
 };
+use ::log::LevelFilter;
 use anyhow::{Error, Result};
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
+use log::{set_logger, set_max_level};
 use prost::Message;
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
@@ -48,6 +52,7 @@ use rest_api::get::{
     receipt, system_config, tx, version,
 };
 use rest_api::post::{call, create, send_tx};
+use rocket::config::LogLevel;
 use rocket::fairing::AdHoc;
 use rocket::{routes, Build, Rocket};
 use serde::Deserialize;
@@ -58,8 +63,8 @@ use utoipa_swagger_ui::SwaggerUi;
 #[macro_use]
 extern crate rocket;
 
-fn rocket() -> Rocket<Build> {
-    rocket::build()
+fn rocket(figment: Figment) -> Rocket<Build> {
+    rocket::custom(figment)
         .mount(
             "/",
             SwaggerUi::new("/swagger-ui/<_..>").url("/api-doc/openapi.json", ApiDoc::openapi()),
@@ -110,8 +115,7 @@ async fn commit_tx(timing_batch: isize, controller: ControllerClient) -> Result<
             Ok(data) => data,
             Err(e) => {
                 warn!(
-                    "[{}] hget hkey: {}, key: {}, error: {}",
-                    current_time(),
+                    "hget hkey: {}, key: {}, error: {}",
                     hash_to_tx(),
                     tx_hash.clone(),
                     e
@@ -125,7 +129,7 @@ async fn commit_tx(timing_batch: isize, controller: ControllerClient) -> Result<
                 zrem(uncommitted_tx_key(), tx_hash.clone())?;
                 zadd(committed_tx_key(), tx_hash.clone(), score)?;
                 let hash_str = hex_without_0x(&data);
-                info!("[{}] commit tx success, hash: {}", current_time(), hash_str);
+                info!("commit tx success, hash: {}", hash_str);
             }
             Err(e) => {
                 let err_str = format!("{}", e);
@@ -139,7 +143,7 @@ async fn commit_tx(timing_batch: isize, controller: ControllerClient) -> Result<
                 zrem(uncommitted_tx_key(), tx_hash.clone())?;
                 set(key(RECEIPT.to_string(), hash.clone()), err_str.clone())?;
                 set(key(TX.to_string(), hash.clone()), err_str)?;
-                warn!("[{}] commit tx fail, hash: {}", current_time(), hash);
+                warn!("commit tx fail, hash: {}", hash);
             }
         }
     }
@@ -161,27 +165,15 @@ async fn check_tx(timing_batch: isize, controller: ControllerClient, evm: EvmCli
         match evm.get_receipt(hash).await {
             Ok(receipt) => {
                 set(key(RECEIPT.to_string(), tx_hash.clone()), receipt.display())?;
-                info!(
-                    "[{}] get tx receipt and save success, hash: {}",
-                    current_time(),
-                    tx_hash.clone()
-                );
+                info!("get tx receipt and save success, hash: {}", tx_hash.clone());
                 match controller.get_tx(hash).await {
                     Ok(tx) => {
                         set(key(TX.to_string(), tx_hash.clone()), tx.display())?;
-                        info!(
-                            "[{}] get tx and save success, hash: {}",
-                            current_time(),
-                            tx_hash.clone()
-                        );
+                        info!("get tx and save success, hash: {}", tx_hash.clone());
                     }
                     Err(e) => {
                         set(key(TX.to_string(), tx_hash.clone()), format!("{}", e))?;
-                        info!(
-                            "[{}] retry get tx, hash: {}",
-                            current_time(),
-                            tx_hash.clone()
-                        );
+                        info!("retry get tx, hash: {}", tx_hash.clone());
                     }
                 }
 
@@ -204,11 +196,7 @@ async fn check_tx(timing_batch: isize, controller: ControllerClient, evm: EvmCli
             }
             Err(e) => {
                 set(key(RECEIPT.to_string(), tx_hash.clone()), format!("{}", e))?;
-                info!(
-                    "[{}] retry -> get receipt, hash: {}",
-                    current_time(),
-                    tx_hash.clone()
-                );
+                info!("retry -> get receipt, hash: {}", tx_hash.clone());
             }
         }
         let current = controller.get_block_number(false).await?;
@@ -216,11 +204,7 @@ async fn check_tx(timing_batch: isize, controller: ControllerClient, evm: EvmCli
         let valid_until_block = hget::<u64>(hash_to_block_number(), tx_hash.clone())?;
         if valid_until_block <= current || valid_until_block > (current + config.block_limit as u64)
         {
-            warn!(
-                "[{}] retry -> get receipt, timeout hash: {}",
-                current_time(),
-                tx_hash.clone()
-            );
+            warn!("retry -> get receipt, timeout hash: {}", tx_hash.clone());
             set(
                 key(RECEIPT.to_string(), tx_hash.clone()),
                 "timeout".to_string(),
@@ -255,14 +239,30 @@ pub struct Config {
     timing_internal_sec: Option<u64>,
     timing_batch: Option<u64>,
     account: String,
+    log_level: LogLevel,
 }
+
+use rocket::config::Config as RocketConfig;
+use rocket::figment::providers::{Env, Format, Toml};
+use rocket::figment::{Figment, Profile};
 
 #[rocket::main]
 async fn main() {
     init_local_utc_offset();
-    let rocket: Rocket<Build> = rocket().attach(AdHoc::config::<Config>());
-    let figment = rocket.figment();
-    let config: Config = figment.extract().expect("config");
+    let figment = Figment::from(RocketConfig::debug_default())
+        .merge(Toml::file(Env::var_or("ROCKET_CONFIG", "Rocket.toml")).nested())
+        .merge(Env::prefixed("ROCKET_").ignore(&["PROFILE"]).global())
+        .select(Profile::from_env_or(
+            "ROCKET_PROFILE",
+            RocketConfig::DEFAULT_PROFILE,
+        ));
+    let config = figment.extract::<Config>().unwrap();
+    match set_logger(&LOGGER) {
+        Ok(_) => {}
+        Err(e) => println!("{}", e),
+    }
+    set_max_level(LevelFilter::from(config.log_level));
+    let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<Config>());
 
     let ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient> = Context::new(
         config
@@ -291,6 +291,7 @@ async fn main() {
         ctx.controller.clone(),
         ctx.evm.clone(),
     ));
+
     if let Err(e) = rocket.manage(ctx).launch().await {
         error!("Whoops! Rocket didn't launch!");
         // We drop the error to get a Rocket-formatted panic.

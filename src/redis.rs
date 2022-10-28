@@ -29,7 +29,7 @@ pub fn pool(redis_addr: String) -> Pool {
     let pool = Pool::new(manager).expect("db pool");
     match REDIS_POOL.set(pool.clone()) {
         Ok(_) => {}
-        Err(e) => println!("set redis pool fail: {:?}", e),
+        Err(e) => error!("set redis pool fail: {:?}", e),
     };
     pool
 }

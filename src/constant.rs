@@ -25,7 +25,6 @@ pub const VAL_TYPE: &str = "val";
 pub const UNCOMMITTED_TX: &str = "uncommitted_tx_hash";
 pub const COMMITTED_TX: &str = "committed_tx_hash";
 pub const HASH_TO_TX: &str = "hash_to_tx";
-pub const HASH_TO_RETRY_HASH: &str = "hash_to_retry_hash";
 pub const HASH_TO_BLOCK_NUMBER: &str = "hash_to_block_number";
 pub const RECEIPT: &str = "receipt";
 pub const TX: &str = "tx";

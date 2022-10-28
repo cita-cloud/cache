@@ -44,7 +44,7 @@ pub async fn abi(
     result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 ) -> Json<CacheResult<Value>> {
-    println!("get-abi address {}", address);
+    info!("get-abi address {}", address);
     Json(result)
 }
 
@@ -62,7 +62,7 @@ pub async fn balance(
     result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 ) -> Json<CacheResult<Value>> {
-    println!("get-balance address {}", address);
+    info!("get-balance address {}", address);
     Json(result)
 }
 
@@ -80,7 +80,7 @@ pub async fn block(
     result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 ) -> Json<CacheResult<Value>> {
-    println!("get-block hash_or_height {}", hash_or_height);
+    info!("get-block hash_or_height {}", hash_or_height);
     Json(result)
 }
 
@@ -98,7 +98,7 @@ pub async fn code(
     result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 ) -> Json<CacheResult<Value>> {
-    println!("get-code address {}", address);
+    info!("get-code address {}", address);
     Json(result)
 }
 
@@ -116,7 +116,7 @@ pub async fn tx(
     result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 ) -> Json<CacheResult<Value>> {
-    println!("get-tx hash {}", hash);
+    info!("get-tx hash {}", hash);
     Json(result)
 }
 
@@ -154,7 +154,7 @@ pub async fn account_nonce(
     result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 ) -> Json<CacheResult<Value>> {
-    println!("get-account-nonce address {}", address);
+    info!("get-account-nonce address {}", address);
     Json(result)
 }
 
@@ -172,7 +172,7 @@ pub async fn receipt(
     result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 ) -> Json<CacheResult<Value>> {
-    println!("get-receipt hash {}", hash);
+    info!("get-receipt hash {}", hash);
     Json(result)
 }
 
@@ -210,6 +210,6 @@ pub async fn block_hash(
     result: CacheResult<Value>,
     _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 ) -> Json<CacheResult<Value>> {
-    println!("get-block-hash block_number {}", block_number);
+    info!("get-block-hash block_number {}", block_number);
     Json(result)
 }
