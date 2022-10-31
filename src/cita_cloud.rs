@@ -12,27 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::core::controller::SignerBehaviour;
-use crate::crypto::Address;
-use crate::{ArrayLike, CryptoClient};
-
-pub struct Account {
-    client: CryptoClient,
-    address: Address,
-}
-
-impl Account {
-    pub fn new(client: CryptoClient, address: Address) -> Self {
-        Self { client, address }
-    }
-}
-
-impl SignerBehaviour for Account {
-    fn address(&self) -> Vec<u8> {
-        self.address.to_vec()
-    }
-
-    fn client(&self) -> CryptoClient {
-        self.client.clone()
-    }
-}
+pub mod account;
+pub mod controller;
+pub mod crypto;
+pub mod evm;
+pub mod executor;

@@ -15,21 +15,22 @@
 use anyhow::Context as Ctx;
 use std::u64;
 
-use crate::context::Context;
-use crate::core::account::Account;
-use crate::core::controller::{ControllerBehaviour, TransactionSenderBehaviour};
-use crate::core::executor::ExecutorBehaviour;
-use crate::crypto::Address;
-use crate::display::Display;
-use crate::redis::load;
-use crate::rest_api::common::{failure, success, CacheResult};
-use crate::util::{
+use crate::cita_cloud::account::Account;
+use crate::cita_cloud::controller::{ControllerBehaviour, TransactionSenderBehaviour};
+use crate::cita_cloud::executor::ExecutorBehaviour;
+use crate::common::crypto::Address;
+use crate::common::display::Display;
+use crate::common::util::{
     contract_key, hash_to_block_number, hex, parse_addr, parse_data, parse_value, remove_0x,
 };
+use crate::core::context::Context;
+use crate::hset;
+use crate::redis::{load, set_ex};
+use crate::rest_api::common::{failure, success, CacheResult};
 use crate::{
-    hex_without_0x, set, ArrayLike, ControllerClient, CryptoClient, EvmClient, ExecutorClient,
+    hex_without_0x, ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient,
+    ExecutorClient,
 };
-use crate::{hset, Config};
 use anyhow::Result;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
 use rocket::serde::json::Json;
@@ -146,7 +147,7 @@ request_body = CreateContract,
 pub async fn create(
     result: Json<CreateContract<'_>>,
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-    config: &State<Config>,
+    config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
     let address = match parse_addr(config.account.as_str()) {
         Ok(address) => address,
@@ -183,7 +184,7 @@ request_body = SendTx,
 pub async fn send_tx(
     result: Json<SendTx<'_>>,
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-    config: &State<Config>,
+    config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
     let address = match parse_addr(config.account.as_str()) {
         Ok(address) => address,
@@ -213,7 +214,7 @@ pub async fn send_tx(
 
 fn call_param(
     result: Call<'_>,
-    config: &State<Config>,
+    config: &State<CacheConfig>,
 ) -> Result<(Address, Address, Vec<u8>, u64)> {
     let from = parse_addr(config.account.as_str())?;
     let to = parse_addr(result.to)?;
@@ -232,7 +233,7 @@ request_body = Call,
 pub async fn call(
     result: Json<Call<'_>>,
     ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-    config: &State<Config>,
+    config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
     let key = contract_key(
         remove_0x(result.to).to_string(),
@@ -254,7 +255,7 @@ pub async fn call(
     match ctx.executor.call(from, to, data, height).await {
         Ok(data) => {
             let val = hex(data.value.as_slice());
-            match set(key, val.clone()) {
+            match set_ex(key, val.clone(), config.expire_time.unwrap() as usize) {
                 Ok(_) => Json(success(Value::String(val))),
                 Err(e) => Json(failure(anyhow::Error::from(e))),
             }

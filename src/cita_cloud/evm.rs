@@ -16,7 +16,7 @@ use anyhow::Context as _;
 use anyhow::Result;
 
 use super::controller::{SignerBehaviour, TransactionSenderBehaviour};
-use crate::{
+use crate::common::{
     crypto::{Address, ArrayLike, Hash},
     util::parse_addr,
 };

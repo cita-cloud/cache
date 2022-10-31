@@ -15,7 +15,7 @@
 use anyhow::{Context, Result};
 use cita_cloud_proto::client::{ExecutorClientTrait, InterceptedSvc};
 
-use crate::crypto::{Address, ArrayLike};
+use crate::common::crypto::{Address, ArrayLike};
 use cita_cloud_proto::executor::{
     executor_service_client::ExecutorServiceClient, CallRequest, CallResponse,
 };

@@ -13,6 +13,7 @@
 // limitations under the License.
 extern crate rocket;
 
+use crate::common::util::{clean_up_key, evict_key_to_time_key, fix_time, time_pair, timestamp};
 use r2d2::PooledConnection;
 use r2d2_redis::redis::{Commands, FromRedisValue, ToRedisArgs};
 use r2d2_redis::RedisConnectionManager;
@@ -48,16 +49,62 @@ pub fn load(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
         Ok(String::default())
     }
 }
+
+pub fn get(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
+    con().get(key)
+}
+
+pub fn ttl(key: String) -> Result<isize, r2d2_redis::redis::RedisError> {
+    con().ttl(key)
+}
+
+fn expire_inner(key: String, expire_time: usize) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con().expire(key, expire_time)
+}
+
+pub fn expire(key: String, seconds: usize) -> Result<u64, r2d2_redis::redis::RedisError> {
+    let old_expire_time = hget(evict_key_to_time_key(), key.clone())?;
+    let old_fix_time = fix_time(old_expire_time);
+
+    let (expire_time, fix_time) = time_pair(timestamp(), seconds);
+
+    smove(
+        clean_up_key(old_fix_time),
+        clean_up_key(fix_time),
+        key.clone(),
+    )?;
+    hset(evict_key_to_time_key(), key.clone(), expire_time)?;
+    expire_inner(key, seconds)
+}
 #[allow(dead_code)]
 pub fn exists(key: String) -> Result<bool, r2d2_redis::redis::RedisError> {
     con().exists(key)
 }
 
+#[allow(dead_code)]
 pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     key: String,
     val: T,
 ) -> Result<String, r2d2_redis::redis::RedisError> {
     con().set::<String, T, String>(key, val)
+}
+
+fn set_ex_inner<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    key: String,
+    val: T,
+    seconds: usize,
+) -> Result<String, r2d2_redis::redis::RedisError> {
+    con().set_ex::<String, T, String>(key, val, seconds)
+}
+pub fn set_ex<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    key: String,
+    val: T,
+    seconds: usize,
+) -> Result<String, r2d2_redis::redis::RedisError> {
+    let (expire_time, fix_time) = time_pair(timestamp(), seconds);
+    sadd(clean_up_key(fix_time), key.clone())?;
+    hset(evict_key_to_time_key(), key.clone(), expire_time)?;
+    set_ex_inner(key, val, seconds)
 }
 
 #[allow(dead_code)]
@@ -157,6 +204,20 @@ pub fn sismember<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     member: T,
 ) -> Result<bool, r2d2_redis::redis::RedisError> {
     con().sismember(key, member)
+}
+
+pub fn smembers<T: Clone + Default + ToRedisArgs + FromRedisValue>(
+    key: String,
+) -> Result<Vec<T>, r2d2_redis::redis::RedisError> {
+    con().smembers(key)
+}
+
+pub fn smove<T: Clone + Default + ToRedisArgs + FromRedisValue>(
+    src: String,
+    target: String,
+    member: T,
+) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con().smove(src, target, member)
 }
 
 pub fn keys<T: Clone + Default + ToRedisArgs + FromRedisValue>(
