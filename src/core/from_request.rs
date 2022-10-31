@@ -14,17 +14,16 @@
 
 extern crate rocket;
 
-use crate::util::{key, key_without_param, parse_addr, parse_hash, parse_u64, remove_0x};
+use crate::common::display::Display;
+use crate::common::util::{key, key_without_param, parse_addr, parse_hash, parse_u64, remove_0x};
 use rocket::{Request, State};
 
-use crate::context::Context;
-use crate::core::controller::ControllerBehaviour;
-use crate::core::evm::EvmBehaviour;
-use crate::display::Display;
-use crate::error::CacheError;
-use crate::redis::{load, set};
+use crate::cita_cloud::controller::ControllerBehaviour;
+use crate::cita_cloud::evm::EvmBehaviour;
+use crate::common::error::CacheError;
+use crate::redis::{expire, get, set_ex, ttl};
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{CacheConfig, Context, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use anyhow::Result;
 use rocket::http::Method::Get;
 use rocket::http::Status;
@@ -48,90 +47,91 @@ fn with_param(req: &Request) -> bool {
     path_count(req) == vec!["", "api", "{query-name}", "{param}"].len()
 }
 
-async fn get_and_save(
+async fn query_and_load(
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     path: &str,
     param: String,
     key: String,
+    expire_time: usize,
 ) -> Result<Value> {
     match path {
         "block-number" => {
             let block_number = ctx.controller.get_block_number(false).await?;
-            set(key, block_number)?;
+            set_ex(key, block_number, expire_time)?;
             Ok(json!(block_number))
         }
         "peers-count" => {
             let peer_count = ctx.controller.get_peer_count().await?;
-            set(key, peer_count)?;
+            set_ex(key, peer_count, expire_time)?;
             Ok(json!(peer_count))
         }
         "version" => {
             let version = ctx.controller.get_version().await?;
-            set(key, version.clone())?;
+            set_ex(key, version.clone(), expire_time)?;
             Ok(json!(version))
         }
         "peers-info" => {
             let info = ctx.controller.get_peers_info().await?;
-            set(key, info.display())?;
+            set_ex(key, info.display(), expire_time)?;
             Ok(info.to_json())
         }
         "system-config" => {
             let config = ctx.controller.get_system_config().await?;
-            set(key, config.display())?;
+            set_ex(key, config.display(), expire_time)?;
             Ok(config.to_json())
         }
         "abi" => {
             let data = parse_addr(param.as_str())?;
             let abi = ctx.evm.get_abi(data).await?;
-            set(key, abi.display())?;
+            set_ex(key, abi.display(), expire_time)?;
             Ok(abi.to_json())
         }
         "account-nonce" => {
             let data = parse_addr(param.as_str())?;
             let nonce = ctx.evm.get_tx_count(data).await?;
-            set(key, nonce.display())?;
+            set_ex(key, nonce.display(), expire_time)?;
             Ok(nonce.to_json())
         }
         "balance" => {
             let data = parse_addr(param.as_str())?;
             let balance = ctx.evm.get_balance(data).await?;
-            set(key, balance.display())?;
+            set_ex(key, balance.display(), expire_time)?;
             Ok(balance.to_json())
         }
         "code" => {
             let data = parse_addr(param.as_str())?;
             let code = ctx.evm.get_code(data).await?;
-            set(key, code.display())?;
+            set_ex(key, code.display(), expire_time)?;
             Ok(code.to_json())
         }
         "block-hash" => {
             let data = parse_u64(param.as_str())?;
             let hash = ctx.controller.get_block_hash(data).await?;
-            set(key, hash.display())?;
+            set_ex(key, hash.display(), expire_time)?;
             Ok(hash.to_json())
         }
         "receipt" => {
             let data = parse_hash(param.as_str())?;
             let receipt = ctx.evm.get_receipt(data).await?;
-            set(key, receipt.display())?;
+            set_ex(key, receipt.display(), expire_time)?;
             Ok(receipt.to_json())
         }
         "tx" => {
             let data = parse_hash(param.as_str())?;
             let tx = ctx.controller.get_tx(data).await?;
-            set(key, tx.display())?;
+            set_ex(key, tx.display(), expire_time)?;
             Ok(tx.to_json())
         }
         "block" => {
             if let Ok(data) = parse_u64(param.as_str()) {
                 let block = ctx.controller.get_block_by_number(data).await?;
-                set(key, block.display())?;
+                set_ex(key, block.display(), expire_time)?;
                 Ok(block.to_json())
             } else {
                 match parse_hash(param.as_str()) {
                     Ok(data) => {
                         let block = ctx.controller.get_block_by_hash(data).await?;
-                        set(key, block.display())?;
+                        set_ex(key, block.display(), expire_time)?;
                         Ok(block.to_json())
                     }
                     Err(e) => Err(e),
@@ -142,21 +142,27 @@ async fn get_and_save(
     }
 }
 
-async fn result(
+async fn try_load(
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     pattern: &str,
     param: String,
+    expire_time: usize,
 ) -> Result<CacheResult<Value>> {
     let (key, param) = (key(pattern.to_string(), param.clone()), param);
-    let val = load(key.clone())?;
-    if val == String::default() {
-        let data = get_and_save(ctx, pattern, param, key.clone()).await?;
-        Ok(success(data))
-    } else {
-        match serde_json::from_str(val.as_str()) {
-            Ok(data) => Ok(success(data)),
-            Err(_) => Ok(success(Value::String(val))),
+    match ttl(key.clone()) {
+        Ok(-1) | Ok(-2) => {
+            let data = query_and_load(ctx, pattern, param, key.clone(), expire_time).await?;
+            Ok(success(data))
         }
+        Ok(_) => {
+            expire(key.clone(), expire_time)?;
+            let val = get(key.clone())?;
+            match serde_json::from_str(val.as_str()) {
+                Ok(data) => Ok(success(data)),
+                Err(_) => Ok(success(Value::String(val))),
+            }
+        }
+        Err(e) => Err(anyhow::Error::from(e)),
     }
 }
 
@@ -196,16 +202,32 @@ impl<'r> FromRequest<'r> for CacheResult<Value> {
             .guard::<&State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>>()
             .await
             .unwrap();
+        let config = req.guard::<&State<CacheConfig>>().await.unwrap();
         let pattern = &get_param(req, 0)["get-".len()..];
         let param = remove_0x(get_param(req, 1));
 
         if !with_param(req) {
-            match get_and_save(ctx, pattern, param.to_string(), key_without_param(pattern)).await {
+            match query_and_load(
+                ctx,
+                pattern,
+                param.to_string(),
+                key_without_param(pattern),
+                config.expire_time.unwrap() as usize,
+            )
+            .await
+            {
                 Ok(data) => Outcome::Success(success(data)),
                 Err(e) => Outcome::Success(failure(e)),
             }
         } else {
-            match result(ctx, pattern, param.to_string()).await {
+            match try_load(
+                ctx,
+                pattern,
+                param.to_string(),
+                config.expire_time.unwrap() as usize,
+            )
+            .await
+            {
                 Ok(data) => Outcome::Success(data),
                 Err(e) => Outcome::Success(failure(e)),
             }

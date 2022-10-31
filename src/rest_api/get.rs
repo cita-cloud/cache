@@ -14,7 +14,7 @@
 
 extern crate rocket;
 
-use crate::context::Context;
+use crate::core::context::Context;
 use crate::rest_api::common::CacheResult;
 use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use rocket::serde::json::Json;

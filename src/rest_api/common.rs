@@ -1,4 +1,4 @@
-use crate::constant::{FAILURE, SUCCESS, SUCCESS_MESSAGE};
+use crate::common::constant::{FAILURE, SUCCESS, SUCCESS_MESSAGE};
 use crate::rest_api::get::*;
 use crate::rest_api::post::*;
 use anyhow::Error;

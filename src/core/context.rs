@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::core::controller::ControllerBehaviour;
-use crate::core::crypto::CryptoBehaviour;
-use crate::core::evm::EvmBehaviour;
-use crate::core::executor::ExecutorBehaviour;
+use crate::cita_cloud::controller::ControllerBehaviour;
+use crate::cita_cloud::crypto::CryptoBehaviour;
+use crate::cita_cloud::evm::EvmBehaviour;
+use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::pool;
 use crate::redis::Pool;
 use cita_cloud_proto::client::ClientOptions;
