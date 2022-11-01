@@ -175,7 +175,7 @@ where
 mod tests {
     use super::constant::*;
     use super::*;
-    use crate::util::parse_data;
+    use crate::common::util::parse_data;
 
     #[test]
     fn test_constant() -> Result<()> {
