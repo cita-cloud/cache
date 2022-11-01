@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use crate::common::constant::{
-    COMMITTED_TX, CONTRACT_KEY, EVICT_KEY_TO_TIME, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE,
-    KEY_PREFIX, ONE_MIN, SET_TYPE, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VAL_TYPE, ZSET_TYPE,
+    COMMITTED_TX, CONTRACT_KEY, EVICT_TO_ROUGH_TIME, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE,
+    KEY_PREFIX, LAZY_EVICT_TO_TIME, SET_TYPE, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VAL_TYPE,
+    ZSET_TYPE,
 };
 use crate::common::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
@@ -148,8 +149,12 @@ pub fn clean_up_key(time: u64) -> String {
     format!("{}:{}:{}:{}", KEY_PREFIX, SET_TYPE, TIME_TO_CLEAN_UP, time)
 }
 
-pub fn evict_key_to_time_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, EVICT_KEY_TO_TIME)
+pub fn lazy_evict_to_time() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, LAZY_EVICT_TO_TIME)
+}
+
+pub fn evict_to_rough_time() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, EVICT_TO_ROUGH_TIME)
 }
 
 pub fn timestamp() -> u64 {
@@ -161,15 +166,13 @@ pub fn timestamp() -> u64 {
         + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as u64
 }
 
-pub fn time_pair(timestamp: u64, internal: usize) -> (u64, u64) {
+pub fn time_pair(timestamp: u64, internal: usize, rough_internal: u64) -> (u64, u64) {
     let expire_time = timestamp + (internal * 1000) as u64;
-    info!("expire time: {}", display_time(expire_time));
-    //key 之前 seconds内过期的key
-    let fix_time = fix_time(expire_time);
-    info!("fix time: {}", display_time(fix_time));
-    (expire_time, fix_time)
+    //key 之前 internal内过期的key
+    let rough_time = rough_time(expire_time, rough_internal);
+    (expire_time, rough_time)
 }
 
-pub fn fix_time(expire_time: u64) -> u64 {
-    expire_time - expire_time % ONE_MIN + ONE_MIN
+pub fn rough_time(expire_time: u64, rough_internal: u64) -> u64 {
+    expire_time - expire_time % rough_internal * 1000 + rough_internal * 1000
 }

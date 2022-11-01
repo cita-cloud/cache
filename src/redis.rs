@@ -13,9 +13,10 @@
 // limitations under the License.
 extern crate rocket;
 
-use crate::common::util::{clean_up_key, evict_key_to_time_key, fix_time, time_pair, timestamp};
+use crate::common::util::{clean_up_key, lazy_evict_to_time, rough_time, time_pair, timestamp};
+use crate::evict_to_rough_time;
 use r2d2::PooledConnection;
-use r2d2_redis::redis::{Commands, FromRedisValue, ToRedisArgs};
+use r2d2_redis::redis::{Commands, ControlFlow, FromRedisValue, Msg, PubSubCommands, ToRedisArgs};
 use r2d2_redis::RedisConnectionManager;
 use std::collections::HashSet;
 use std::fmt::Display;
@@ -23,15 +24,18 @@ use std::hash::Hash;
 use tokio::sync::OnceCell;
 
 pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
+pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
 // Pool initiation.
 // Call it starting an app and store a pool as a rocket managed state.
-pub fn pool(redis_addr: String) -> Pool {
+pub fn pool(redis_addr: String, rough_internal: u64) -> Pool {
     let manager = RedisConnectionManager::new(redis_addr).expect("connection manager");
     let pool = Pool::new(manager).expect("db pool");
-    match REDIS_POOL.set(pool.clone()) {
-        Ok(_) => {}
-        Err(e) => error!("set redis pool fail: {:?}", e),
+    if let Err(e) = REDIS_POOL.set(pool.clone()) {
+        error!("set redis pool fail: {:?}", e)
     };
+    if let Err(e) = ROUGH_INTERNAL.set(rough_internal) {
+        error!("set rough internal fail: {:?}", e)
+    }
     pool
 }
 
@@ -39,6 +43,10 @@ pub type Pool = r2d2::Pool<RedisConnectionManager>;
 
 pub fn con() -> PooledConnection<RedisConnectionManager> {
     REDIS_POOL.get().unwrap().get().unwrap()
+}
+
+pub fn rough_internal() -> u64 {
+    *ROUGH_INTERNAL.get().unwrap()
 }
 
 pub fn load(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
@@ -63,17 +71,19 @@ fn expire_inner(key: String, expire_time: usize) -> Result<u64, r2d2_redis::redi
 }
 
 pub fn expire(key: String, seconds: usize) -> Result<u64, r2d2_redis::redis::RedisError> {
-    let old_expire_time = hget(evict_key_to_time_key(), key.clone())?;
-    let old_fix_time = fix_time(old_expire_time);
+    let old_expire_time = hget(lazy_evict_to_time(), key.clone())?;
+    let rough_internal = rough_internal();
+    let old_rough_time = rough_time(old_expire_time, rough_internal);
 
-    let (expire_time, fix_time) = time_pair(timestamp(), seconds);
+    let (expire_time, rough_time) = time_pair(timestamp(), seconds, rough_internal);
 
     smove(
-        clean_up_key(old_fix_time),
-        clean_up_key(fix_time),
+        clean_up_key(old_rough_time),
+        clean_up_key(rough_time),
         key.clone(),
     )?;
-    hset(evict_key_to_time_key(), key.clone(), expire_time)?;
+    hset(lazy_evict_to_time(), key.clone(), expire_time)?;
+    hset(evict_to_rough_time(), key.clone(), clean_up_key(rough_time))?;
     expire_inner(key, seconds)
 }
 #[allow(dead_code)]
@@ -101,9 +111,10 @@ pub fn set_ex<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     val: T,
     seconds: usize,
 ) -> Result<String, r2d2_redis::redis::RedisError> {
-    let (expire_time, fix_time) = time_pair(timestamp(), seconds);
-    sadd(clean_up_key(fix_time), key.clone())?;
-    hset(evict_key_to_time_key(), key.clone(), expire_time)?;
+    let (expire_time, rough_time) = time_pair(timestamp(), seconds, rough_internal());
+    sadd(clean_up_key(rough_time), key.clone())?;
+    hset(lazy_evict_to_time(), key.clone(), expire_time)?;
+    hset(evict_to_rough_time(), key.clone(), clean_up_key(rough_time))?;
     set_ex_inner(key, val, seconds)
 }
 
@@ -220,8 +231,22 @@ pub fn smove<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     con().smove(src, target, member)
 }
 
+pub fn srem<T: Clone + Default + ToRedisArgs + FromRedisValue>(
+    key: String,
+    member: T,
+) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con().srem(key, member)
+}
+
 pub fn keys<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     pattern: String,
 ) -> Result<Vec<T>, r2d2_redis::redis::RedisError> {
     con().keys(pattern)
+}
+
+pub fn psubscribe<F: FnMut(Msg) -> ControlFlow<()>>(
+    pattern: String,
+    func: F,
+) -> Result<(), r2d2_redis::redis::RedisError> {
+    con().psubscribe(pattern, func)
 }

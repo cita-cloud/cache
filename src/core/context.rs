@@ -38,6 +38,7 @@ impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
         executor_addr: String,
         crypto_addr: String,
         redis_addr: String,
+        rough_internal: u64,
     ) -> Self
     where
         Co: ControllerBehaviour + Clone,
@@ -76,7 +77,7 @@ impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
             }
         }));
 
-        let redis_pool = pool(redis_addr);
+        let redis_pool = pool(redis_addr, rough_internal);
         let controller = Co::connect(controller_client);
         let executor = Ex::connect(executor_client);
         let evm = Ev::connect(evm_client);
