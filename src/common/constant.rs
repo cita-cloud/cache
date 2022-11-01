@@ -14,7 +14,6 @@
 
 pub const SUCCESS: u64 = 1;
 pub const FAILURE: u64 = 0;
-pub const ONE_MIN: u64 = 60_000;
 pub const SUCCESS_MESSAGE: &str = "success";
 pub const KEY_PREFIX: &str = "cache";
 pub const HASH_TYPE: &str = "hash";
@@ -28,7 +27,8 @@ pub const COMMITTED_TX: &str = "committed_tx_hash";
 pub const HASH_TO_TX: &str = "hash_to_tx";
 pub const HASH_TO_BLOCK_NUMBER: &str = "hash_to_block_number";
 pub const TIME_TO_CLEAN_UP: &str = "time_to_clean_up";
-pub const EVICT_KEY_TO_TIME: &str = "evict_key_to_time";
+pub const LAZY_EVICT_TO_TIME: &str = "lazy_evict_to_time";
+pub const EVICT_TO_ROUGH_TIME: &str = "evict_to_rough_time";
 pub const RECEIPT: &str = "receipt";
 pub const TX: &str = "tx";
 pub const CONTRACT_KEY: &str = "contract";

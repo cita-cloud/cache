@@ -28,20 +28,21 @@ use crate::common::constant::{RECEIPT, TX};
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
 use crate::common::util::{
-    clean_up_key, committed_tx_key, contract_pattern, current_time, evict_key_to_time_key,
-    hash_to_block_number, hash_to_tx, hex_without_0x, init_local_utc_offset, key, parse_data,
-    timestamp, uncommitted_tx_key,
+    clean_up_key, committed_tx_key, contract_pattern, current_time, evict_to_rough_time,
+    hash_to_block_number, hash_to_tx, hex_without_0x, init_local_utc_offset, key,
+    lazy_evict_to_time, parse_data, timestamp, uncommitted_tx_key,
 };
 use crate::core::context::Context;
 use crate::redis::{
-    delete, exists, get, hdel, hget, hset, keys, pool, set_ex, smembers, zadd, zrange,
-    zrange_withscores, zrem,
+    delete, exists, get, hdel, hget, hset, keys, pool, psubscribe, set_ex, smembers, srem, zadd,
+    zrange, zrange_withscores, zrem,
 };
 use ::log::LevelFilter;
 use anyhow::{Error, Result};
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
 use log::{set_logger, set_max_level};
 use prost::Message;
+use r2d2_redis::redis::{ControlFlow, Msg};
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
@@ -163,6 +164,13 @@ async fn clean_key(tx_hash: String) -> Result<()> {
     Ok(())
 }
 
+fn clean_expired_key(key: String, member: String) -> Result<()> {
+    hdel(lazy_evict_to_time(), member.clone())?;
+    hdel(evict_to_rough_time(), member.clone())?;
+    srem(key, member)?;
+    Ok(())
+}
+
 async fn check_tx(
     timing_batch: isize,
     expire_time: usize,
@@ -278,13 +286,12 @@ async fn evict_expired_key(timing_internal_sec: u64, expire_time: usize) -> Resu
         let key = clean_up_key(time);
         if exists(key.clone())? {
             for member in smembers::<String>(key.clone())? {
-                hdel(evict_key_to_time_key(), member.clone())?;
                 if get(member.clone()).is_err() {
-                    info!("evict expired key: {}", member);
+                    info!("lazy evict expired key: {}", member);
                 }
+                clean_expired_key(key.clone(), member.clone())?;
             }
         }
-        delete(key)?;
     }
 }
 
@@ -299,7 +306,10 @@ pub struct CacheConfig {
     timing_batch: Option<u64>,
     account: String,
     log_level: LogLevel,
+    //read cache timeout
     expire_time: Option<u64>,
+    //collect expired keys in rough_internal seconds
+    rough_internal: Option<u64>,
 }
 
 impl Default for CacheConfig {
@@ -314,6 +324,7 @@ impl Default for CacheConfig {
             account: "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7".to_string(),
             log_level: LogLevel::Normal,
             expire_time: Some(60),
+            rough_internal: Some(10),
         }
     }
 }
@@ -329,6 +340,7 @@ impl Display for CacheConfig {
             "account": self.account,
             "log_level": self.log_level,
             "expire_time": self.expire_time,
+            "rough_internal": self.rough_internal,
         })
     }
 }
@@ -352,6 +364,7 @@ async fn param(
         config.executor_addr.unwrap_or_default(),
         config.crypto_addr.unwrap_or_default(),
         config.redis_addr.unwrap_or_default(),
+        config.rough_internal.unwrap_or_default(),
     );
     (
         ctx,
@@ -359,6 +372,25 @@ async fn param(
         config.timing_batch.unwrap_or_default() as isize,
         config.expire_time.unwrap_or_default() as usize,
     )
+}
+
+fn clean(msg: Msg) -> Result<String> {
+    let expired_key = msg.get_payload::<String>()?;
+    let key = hget(evict_to_rough_time(), expired_key.clone())?;
+    clean_expired_key(key, expired_key.clone())?;
+    Ok(expired_key)
+}
+
+async fn subscribe_expired_event() {
+    if let Err(e) = psubscribe("__keyevent@*__:expired".to_string(), |msg| {
+        match clean(msg) {
+            Ok(expired_key) => info!("evict expired key: {}", expired_key),
+            Err(e) => warn!("evict expired failed: {}", e),
+        }
+        ControlFlow::Continue
+    }) {
+        warn!("subscribe channel failed: {}", e);
+    }
 }
 
 use rocket::config::Config;
@@ -396,6 +428,8 @@ async fn main() {
         ctx.evm.clone(),
     ));
     tokio::spawn(check_expired_key(timing_internal_sec, expire_time));
+
+    tokio::spawn(subscribe_expired_event());
     let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<CacheConfig>());
 
     if let Err(e) = rocket.manage(ctx).launch().await {
