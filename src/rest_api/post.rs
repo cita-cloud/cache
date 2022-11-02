@@ -20,17 +20,13 @@ use crate::cita_cloud::controller::{ControllerBehaviour, TransactionSenderBehavi
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
-use crate::common::util::{
-    contract_key, hash_to_block_number, hex, parse_addr, parse_data, parse_value, remove_0x,
-};
+use crate::common::util::{hex, hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
 use crate::core::context::Context;
+use crate::core::key_manager::{contract_key, hash_to_block_number};
 use crate::hset;
 use crate::redis::{load, set_ex};
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{
-    hex_without_0x, ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient,
-    ExecutorClient,
-};
+use crate::{ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use anyhow::Result;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
 use rocket::serde::json::Json;

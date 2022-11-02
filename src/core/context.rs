@@ -23,6 +23,7 @@ use tokio::sync::OnceCell;
 
 pub const CLIENT_NAME: &str = "cache";
 
+#[derive(Clone)]
 pub struct Context<Co, Ex, Ev, Cr> {
     /// Those gRPC client are connected lazily.
     pub controller: Co,
@@ -32,13 +33,12 @@ pub struct Context<Co, Ex, Ev, Cr> {
     pub redis_pool: Pool,
 }
 
-impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
+impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
     pub fn new(
         controller_addr: String,
         executor_addr: String,
         crypto_addr: String,
         redis_addr: String,
-        rough_internal: u64,
     ) -> Self
     where
         Co: ControllerBehaviour + Clone,
@@ -77,7 +77,7 @@ impl<Co, Ex, Ev, Cr> Context<Co, Ex, Ev, Cr> {
             }
         }));
 
-        let redis_pool = pool(redis_addr, rough_internal);
+        let redis_pool = pool(redis_addr);
         let controller = Co::connect(controller_client);
         let executor = Ex::connect(executor_client);
         let evm = Ev::connect(evm_client);

@@ -11,11 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use crate::common::constant::{
-    COMMITTED_TX, CONTRACT_KEY, EVICT_TO_ROUGH_TIME, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE,
-    KEY_PREFIX, LAZY_EVICT_TO_TIME, SET_TYPE, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VAL_TYPE,
-    ZSET_TYPE,
-};
 use crate::common::crypto::{Address, ArrayLike, Crypto, Hash};
 use anyhow::{anyhow, Context, Result};
 use crossbeam::atomic::AtomicCell;
@@ -110,53 +105,6 @@ pub fn parse_sk<C: Crypto>(s: &str) -> Result<C::SecretKey> {
     C::SecretKey::try_from_slice(&input)
 }
 
-pub fn key(key_type: String, param: String) -> String {
-    format!("{}:{}:{}:{}", KEY_PREFIX, VAL_TYPE, key_type, param)
-}
-
-pub fn key_without_param(key_type: &str) -> String {
-    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, key_type)
-}
-
-pub fn uncommitted_tx_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, UNCOMMITTED_TX)
-}
-
-pub fn committed_tx_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, COMMITTED_TX)
-}
-
-pub fn hash_to_tx() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_TX)
-}
-
-pub fn hash_to_block_number() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_BLOCK_NUMBER)
-}
-
-pub fn contract_pattern(to: String) -> String {
-    format!("{}:{}:{}:{}*", KEY_PREFIX, VAL_TYPE, CONTRACT_KEY, to)
-}
-
-pub fn contract_key(to: String, data: String, height: u64) -> String {
-    format!(
-        "{}:{}:{}:{}:{}:{}",
-        KEY_PREFIX, VAL_TYPE, CONTRACT_KEY, to, data, height
-    )
-}
-
-pub fn clean_up_key(time: u64) -> String {
-    format!("{}:{}:{}:{}", KEY_PREFIX, SET_TYPE, TIME_TO_CLEAN_UP, time)
-}
-
-pub fn lazy_evict_to_time() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, LAZY_EVICT_TO_TIME)
-}
-
-pub fn evict_to_rough_time() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, EVICT_TO_ROUGH_TIME)
-}
-
 pub fn timestamp() -> u64 {
     let start = SystemTime::now();
     let since_the_epoch = start
@@ -164,15 +112,4 @@ pub fn timestamp() -> u64 {
         .expect("Time went backwards");
     since_the_epoch.as_secs() as u64 * 1000u64
         + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as u64
-}
-
-pub fn time_pair(timestamp: u64, internal: usize, rough_internal: u64) -> (u64, u64) {
-    let expire_time = timestamp + (internal * 1000) as u64;
-    //key 之前 internal内过期的key
-    let rough_time = rough_time(expire_time, rough_internal);
-    (expire_time, rough_time)
-}
-
-pub fn rough_time(expire_time: u64, rough_internal: u64) -> u64 {
-    expire_time - expire_time % rough_internal * 1000 + rough_internal * 1000
 }

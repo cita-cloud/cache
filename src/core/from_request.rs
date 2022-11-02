@@ -15,13 +15,15 @@
 extern crate rocket;
 
 use crate::common::display::Display;
-use crate::common::util::{key, key_without_param, parse_addr, parse_hash, parse_u64, remove_0x};
+use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
 use rocket::{Request, State};
 
 use crate::cita_cloud::controller::ControllerBehaviour;
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::common::error::CacheError;
-use crate::redis::{expire, get, set_ex, ttl};
+use crate::core::key_manager::expire;
+use crate::core::key_manager::{key, key_without_param};
+use crate::redis::{get, set_ex, ttl};
 use crate::rest_api::common::{failure, success, CacheResult};
 use crate::{CacheConfig, Context, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use anyhow::Result;
