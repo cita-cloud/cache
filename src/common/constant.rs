@@ -37,6 +37,7 @@ pub const EVICT_TO_ROUGH_TIME: &str = "evict_to_rough_time";
 pub const RECEIPT: &str = "receipt";
 pub const TX: &str = "tx";
 pub const CONTRACT_KEY: &str = "contract";
+pub const EXPIRED_KEY_EVENT_AT_ALL_DB: &str = "__keyevent@*__:expired";
 
 pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
 pub static CONTROLLER_CLIENT: OnceCell<ControllerClient> = OnceCell::const_new();
@@ -47,4 +48,12 @@ pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
 
 pub fn rough_internal() -> u64 {
     *ROUGH_INTERNAL.get().unwrap() * ONE_THOUSAND
+}
+
+pub fn controller() -> ControllerClient {
+    CONTROLLER_CLIENT.get().unwrap().clone()
+}
+
+pub fn evm() -> EvmClient {
+    EVM_CLIENT.get().unwrap().clone()
 }

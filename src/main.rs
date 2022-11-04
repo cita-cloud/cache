@@ -51,6 +51,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::common::util::init_local_utc_offset;
+use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::core::schedule_task::{
     CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, ScheduleTask,
 };
@@ -202,7 +203,10 @@ async fn main() {
     }
     info!("cache config: {}", config.display());
     let (ctx, timing_internal_sec, timing_batch, expire_time) = set_param(config.clone()).await;
-
+    match CacheManager::set_up().await {
+        Ok(_) => info!("cache manager set up success!"),
+        Err(e) => warn!("cache manager set up fail: {}", e),
+    }
     tokio::spawn(CommitTxTask::schedule(
         timing_internal_sec,
         timing_batch,

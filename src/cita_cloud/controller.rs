@@ -21,7 +21,7 @@ use prost::Message;
 use crate::cita_cloud::crypto::CryptoBehaviour;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::util::hex_without_0x;
-use crate::core::key_manager::{CacheManager, TxBehavior};
+use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::CryptoClient;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
@@ -346,6 +346,7 @@ where
     where
         S: SignerBehaviour + Send + Sync,
     {
+        let valid_until_block = raw_tx.valid_until_block;
         let mut buf = vec![];
         let raw = signer.sign_raw_tx(raw_tx).await;
         let empty = Vec::new();
@@ -356,10 +357,13 @@ where
         };
         raw.encode(&mut buf)?;
 
-        CacheManager::enqueue(hex_without_0x(hash), hex_without_0x(&buf[..]))?;
+        CacheManager::enqueue(
+            hex_without_0x(hash),
+            hex_without_0x(&buf[..]),
+            valid_until_block,
+        )?;
 
         Ok(Hash::try_from_slice(hash)?)
-        // self.send_raw(raw).await.context("failed to send raw")
     }
 
     async fn send_raw_utxo<S>(&self, signer: &S, raw_utxo: CloudUtxoTransaction) -> Result<Hash>

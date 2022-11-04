@@ -11,8 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-extern crate rocket;
-
 use crate::common::constant::REDIS_POOL;
 use r2d2::PooledConnection;
 use r2d2_redis::redis::{Commands, ControlFlow, FromRedisValue, Msg, PubSubCommands, ToRedisArgs};
@@ -35,7 +33,7 @@ pub fn pool(redis_addr: String) -> Pool {
 pub type Pool = r2d2::Pool<RedisConnectionManager>;
 
 pub fn con() -> PooledConnection<RedisConnectionManager> {
-    REDIS_POOL.get().unwrap().get().unwrap()
+    REDIS_POOL.get().unwrap().try_get().unwrap()
 }
 
 pub fn get(key: String) -> Result<String, r2d2_redis::redis::RedisError> {

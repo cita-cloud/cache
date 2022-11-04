@@ -18,14 +18,14 @@ use std::u64;
 use crate::cita_cloud::account::Account;
 use crate::cita_cloud::controller::{ControllerBehaviour, TransactionSenderBehaviour};
 use crate::cita_cloud::executor::ExecutorBehaviour;
-use crate::common::crypto::Address;
 use crate::common::display::Display;
-use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
+use crate::common::util::{parse_addr, parse_data, parse_value, remove_0x};
 use crate::core::context::Context;
-use crate::core::key_manager::{contract_key, CacheManager};
-use crate::core::key_manager::{CacheBehavior, TxBehavior};
+use crate::core::key_manager::{contract_key, CacheBehavior, CacheManager};
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{
+    ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash,
+};
 use anyhow::Result;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
 use rocket::serde::json::Json;
@@ -34,102 +34,154 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
+#[tonic::async_trait]
+trait ToTx {
+    async fn to(&self, controller: ControllerClient) -> Result<CloudNormalTransaction>;
+}
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
-pub struct CreateContract<'r> {
+pub struct CreateContract {
     #[schema(
         example = "0x608060405234801561001057600080fd5b5060f58061001f6000396000f3006080604052600436106053576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806306661abd1460585780634f2be91f146080578063d826f88f146094575b600080fd5b348015606357600080fd5b50606a60a8565b6040518082815260200191505060405180910390f35b348015608b57600080fd5b50609260ae565b005b348015609f57600080fd5b5060a660c0565b005b60005481565b60016000808282540192505081905550565b600080819055505600a165627a7a72305820faa1d1f51d7b5ca2b200e0f6cdef4f2d7e44ee686209e300beb1146f40d32dee0029"
     )]
-    pub data: &'r str,
+    pub data: String,
     #[schema(example = "0x0")]
-    pub value: Option<&'r str>,
+    pub value: Option<String>,
     #[schema(example = 300000)]
     pub quota: Option<u64>,
     #[schema(example = 20)]
     pub block_count: Option<i64>,
 }
 
+impl Default for CreateContract {
+    fn default() -> Self {
+        Self {
+            data: "0x608060405234801561001057600080fd5b5060f58061001f6000396000f3006080604052600436106053576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806306661abd1460585780634f2be91f146080578063d826f88f146094575b600080fd5b348015606357600080fd5b50606a60a8565b6040518082815260200191505060405180910390f35b348015608b57600080fd5b50609260ae565b005b348015609f57600080fd5b5060a660c0565b005b60005481565b60016000808282540192505081905550565b600080819055505600a165627a7a72305820faa1d1f51d7b5ca2b200e0f6cdef4f2d7e44ee686209e300beb1146f40d32dee0029".to_string(),
+            value: Some("0x0".to_string()),
+            quota: Some(300000),
+            block_count: Some(20),
+        }
+    }
+}
+#[tonic::async_trait]
+impl ToTx for CreateContract {
+    async fn to(&self, controller: ControllerClient) -> Result<CloudNormalTransaction> {
+        let current = controller.get_block_number(false).await?;
+        let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
+        let to = Vec::new();
+        let data = parse_data(self.data.clone().as_str())?;
+        let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
+        let quota = self.quota.unwrap_or_default();
+        let system_config = controller
+            .get_system_config()
+            .await
+            .context("failed to get system config")?;
+        let version = system_config.version;
+        let chain_id = system_config.chain_id;
+        let nonce = rand::random::<u64>().to_string();
+        Ok(CloudNormalTransaction {
+            version,
+            to,
+            data,
+            value,
+            nonce,
+            quota,
+            valid_until_block,
+            chain_id,
+        })
+    }
+}
+
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
-pub struct SendTx<'r> {
-    #[schema(example = "524268b46968103ce8323353dab16ae857f09a6f")]
-    pub to: &'r str,
+pub struct SendTx {
+    #[schema(example = "0x524268b46968103ce8323353dab16ae857f09a6f")]
+    pub to: String,
     #[schema(example = "0x4f2be91f")]
-    pub data: Option<&'r str>,
+    pub data: Option<String>,
     #[schema(example = "0x0")]
-    pub value: Option<&'r str>,
+    pub value: Option<String>,
     #[schema(example = 300000)]
     pub quota: Option<u64>,
     #[schema(example = 20)]
     pub block_count: Option<i64>,
 }
 
+impl Default for SendTx {
+    fn default() -> Self {
+        Self {
+            to: "0x524268b46968103ce8323353dab16ae857f09a6f".to_string(),
+            data: Some("0x4f2be91f".to_string()),
+            value: Some("0x0".to_string()),
+            quota: Some(300000),
+            block_count: Some(20),
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl ToTx for SendTx {
+    async fn to(&self, controller: ControllerClient) -> Result<CloudNormalTransaction> {
+        let current = controller.get_block_number(false).await?;
+        let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
+        let to = parse_addr(self.to.clone().as_str())?.to_vec();
+        let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
+        let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
+        let quota = self.quota.unwrap_or_default();
+        let system_config = controller
+            .get_system_config()
+            .await
+            .context("failed to get system config")?;
+        let version = system_config.version;
+        let chain_id = system_config.chain_id;
+        let nonce = rand::random::<u64>().to_string();
+        Ok(CloudNormalTransaction {
+            version,
+            to,
+            data,
+            value,
+            nonce,
+            quota,
+            valid_until_block,
+            chain_id,
+        })
+    }
+}
+
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
-pub struct Call<'r> {
-    #[deprecated]
-    pub from: Option<&'r str>,
-    #[schema(example = "b3eefbf4e5280217da74b83f316c5711827933a0")]
-    pub to: &'r str,
+pub struct Call {
+    pub from: Option<String>,
+    #[schema(example = "0xb3eefbf4e5280217da74b83f316c5711827933a0")]
+    pub to: String,
     #[schema(example = "0x06661abd")]
-    pub data: &'r str,
+    pub data: String,
     #[schema(example = 0)]
     pub height: Option<u64>,
 }
 
-async fn get_contract_tx(
-    result: CreateContract<'_>,
-    client: ControllerClient,
-) -> Result<CloudNormalTransaction> {
-    let current = client.get_block_number(false).await?;
-    let valid_until_block: u64 = (current as i64 + result.block_count.unwrap_or(20)) as u64;
-    let to = Vec::new();
-    let data = parse_data(result.data)?;
-    let value = parse_value(result.value.unwrap_or("0x0"))?.to_vec();
-    let quota = result.quota.unwrap_or(1073741824);
-    let system_config = client
-        .get_system_config()
-        .await
-        .context("failed to get system config")?;
-
-    let tx = CloudNormalTransaction {
-        version: system_config.version,
-        to,
-        data,
-        value,
-        nonce: rand::random::<u64>().to_string(),
-        quota,
-        valid_until_block,
-        chain_id: system_config.chain_id,
-    };
-
-    Ok(tx)
+impl Default for Call {
+    fn default() -> Self {
+        Self {
+            from: None,
+            to: "0xb3eefbf4e5280217da74b83f316c5711827933a0".to_string(),
+            data: "0x06661abd".to_string(),
+            height: Some(0),
+        }
+    }
 }
 
-pub async fn get_raw_tx(
-    client: ControllerClient,
-    tx: SendTx<'_>,
-) -> Result<CloudNormalTransaction> {
-    let current = client.get_block_number(false).await?;
-    let valid_until_block: u64 = (current as i64 + tx.block_count.unwrap_or(20)) as u64;
-    let to = parse_addr(tx.to)?.to_vec();
-    let data = parse_data(tx.data.unwrap_or("0x"))?;
-    let value = parse_value(tx.value.unwrap_or("0x0"))?.to_vec();
-    let quota = tx.quota.unwrap_or(200000);
-    let system_config = client
-        .get_system_config()
-        .await
-        .context("failed to get system config")?;
+fn get_account(account: &str, crypto: CryptoClient) -> Result<Account> {
+    let address = parse_addr(account)?;
+    Ok(Account::new(crypto, address))
+}
 
-    let tx = CloudNormalTransaction {
-        version: system_config.version,
-        to,
-        data,
-        value,
-        nonce: rand::random::<u64>().to_string(),
-        quota,
-        valid_until_block,
-        chain_id: system_config.chain_id,
-    };
-
-    Ok(tx)
+async fn create_contract(
+    account: &str,
+    crypto: CryptoClient,
+    controller: ControllerClient,
+    create_contract: CreateContract,
+) -> Result<Hash> {
+    let account = get_account(account, crypto)?;
+    let tx = create_contract.to(controller.clone()).await?;
+    controller.send_raw_tx(&account, tx).await
 }
 
 ///Create contract
@@ -140,32 +192,32 @@ path = "/api/create",
 request_body = CreateContract,
 )]
 pub async fn create(
-    result: Json<CreateContract<'_>>,
+    result: Json<CreateContract>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
-    let address = match parse_addr(config.account.as_str()) {
-        Ok(address) => address,
-        Err(e) => return Json(failure(e)),
-    };
-    let account = Account::new(ctx.crypto.clone(), address);
-    let tx = match get_contract_tx(result.0, ctx.controller.clone()).await {
-        Ok(data) => data,
-        Err(e) => return Json(failure(e)),
-    };
-    match ctx.controller.send_raw_tx(&account, tx.clone()).await {
-        Ok(data) => {
-            if let Err(e) = CacheManager::save_valid_until_block(
-                hex_without_0x(data.as_slice()),
-                tx.valid_until_block,
-            ) {
-                Json(failure(e))
-            } else {
-                Json(success(Value::String(data.display())))
-            }
-        }
+    match create_contract(
+        config.account.as_str(),
+        ctx.crypto.clone(),
+        ctx.controller.clone(),
+        result.0,
+    )
+    .await
+    {
+        Ok(data) => Json(success(data.to_json())),
         Err(e) => Json(failure(e)),
     }
+}
+
+async fn create_tx(
+    account: &str,
+    crypto: CryptoClient,
+    controller: ControllerClient,
+    send_tx: SendTx,
+) -> Result<Hash> {
+    let account = get_account(account, crypto)?;
+    let tx = send_tx.to(controller.clone()).await?;
+    controller.send_raw_tx(&account, tx).await
 }
 
 ///Send Transaction
@@ -176,43 +228,39 @@ path = "/api/sendTx",
 request_body = SendTx,
 )]
 pub async fn send_tx(
-    result: Json<SendTx<'_>>,
+    result: Json<SendTx>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
-    let address = match parse_addr(config.account.as_str()) {
-        Ok(address) => address,
-        Err(e) => return Json(failure(e)),
-    };
-    let account = Account::new(ctx.crypto.clone(), address);
-
-    let raw_tx = match get_raw_tx(ctx.controller.clone(), result.clone().0).await {
-        Ok(data) => data,
-        Err(e) => return Json(failure(e)),
-    };
-    match ctx.controller.send_raw_tx(&account, raw_tx.clone()).await {
-        Ok(data) => {
-            if let Err(e) = CacheManager::save_valid_until_block(
-                hex_without_0x(data.as_slice()),
-                raw_tx.valid_until_block,
-            ) {
-                Json(failure(e))
-            } else {
-                Json(success(Value::String(data.display())))
-            }
-        }
+    match create_tx(
+        config.account.as_str(),
+        ctx.crypto.clone(),
+        ctx.controller.clone(),
+        result.0,
+    )
+    .await
+    {
+        Ok(data) => Json(success(data.to_json())),
         Err(e) => Json(failure(e)),
     }
 }
 
-fn call_param(
-    result: Call<'_>,
+async fn call_or_load(
+    result: Call,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
-) -> Result<(Address, Address, Vec<u8>)> {
+) -> Result<Value> {
+    let key = contract_key(
+        remove_0x(result.to.as_str()).to_string(),
+        remove_0x(result.data.as_str()).to_string(),
+        result.height.unwrap_or_default(),
+    );
     let from = parse_addr(config.account.as_str())?;
-    let to = parse_addr(result.to)?;
-    let data = parse_data(result.data)?;
-    Ok((from, to, data))
+    let to = parse_addr(result.to.as_str())?;
+    let data = parse_data(result.data.as_str())?;
+    let height = result.height.unwrap_or_default();
+    let expire_time = config.expire_time.unwrap() as usize;
+    CacheManager::load_or_query(key, expire_time, ctx.executor.call(from, to, data, height)).await
 }
 ///Call
 #[post("/call", data = "<result>")]
@@ -222,28 +270,11 @@ post,
 request_body = Call,
 )]
 pub async fn call(
-    result: Json<Call<'_>>,
+    result: Json<Call>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
-    let (to_str, data_str, height, expire_time) = (
-        remove_0x(result.to).to_string(),
-        remove_0x(result.data).to_string(),
-        result.height.unwrap_or(0),
-        config.expire_time.unwrap() as usize,
-    );
-    let (from, to, data) = match call_param(result.0, config) {
-        Ok(data) => data,
-        Err(e) => return Json(failure(e)),
-    };
-    let key = contract_key(to_str, data_str, height);
-    match CacheManager::load_or_query(
-        key.clone(),
-        expire_time,
-        ctx.executor.call(from, to, data, height),
-    )
-    .await
-    {
+    match call_or_load(result.0, ctx, config).await {
         Ok(data) => Json(success(data)),
         Err(e) => Json(failure(e)),
     }
