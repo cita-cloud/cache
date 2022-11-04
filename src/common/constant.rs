@@ -18,6 +18,7 @@ use tokio::sync::OnceCell;
 
 pub const SUCCESS: u64 = 1;
 pub const FAILURE: u64 = 0;
+pub const ONE_THOUSAND: u64 = 1000;
 pub const SUCCESS_MESSAGE: &str = "success";
 pub const KEY_PREFIX: &str = "cache";
 pub const HASH_TYPE: &str = "hash";
@@ -43,3 +44,7 @@ pub static EXECUTOR_CLIENT: OnceCell<ExecutorClient> = OnceCell::const_new();
 pub static EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
 pub static CRYPTO_CLIENT: OnceCell<CryptoClient> = OnceCell::const_new();
 pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
+
+pub fn rough_internal() -> u64 {
+    *ROUGH_INTERNAL.get().unwrap() * ONE_THOUSAND
+}

@@ -20,11 +20,10 @@ use crate::cita_cloud::controller::{ControllerBehaviour, TransactionSenderBehavi
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
-use crate::common::util::{hex, hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
+use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
 use crate::core::context::Context;
-use crate::core::key_manager::{contract_key, hash_to_block_number};
-use crate::hset;
-use crate::redis::{load, set_ex};
+use crate::core::key_manager::{contract_key, CacheManager};
+use crate::core::key_manager::{CacheBehavior, TxBehavior};
 use crate::rest_api::common::{failure, success, CacheResult};
 use crate::{ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use anyhow::Result;
@@ -142,7 +141,7 @@ request_body = CreateContract,
 )]
 pub async fn create(
     result: Json<CreateContract<'_>>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
     let address = match parse_addr(config.account.as_str()) {
@@ -156,12 +155,11 @@ pub async fn create(
     };
     match ctx.controller.send_raw_tx(&account, tx.clone()).await {
         Ok(data) => {
-            if let Err(e) = hset(
-                hash_to_block_number(),
+            if let Err(e) = CacheManager::save_valid_until_block(
                 hex_without_0x(data.as_slice()),
                 tx.valid_until_block,
             ) {
-                Json(failure(anyhow::Error::from(e)))
+                Json(failure(e))
             } else {
                 Json(success(Value::String(data.display())))
             }
@@ -179,7 +177,7 @@ request_body = SendTx,
 )]
 pub async fn send_tx(
     result: Json<SendTx<'_>>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
     let address = match parse_addr(config.account.as_str()) {
@@ -194,12 +192,11 @@ pub async fn send_tx(
     };
     match ctx.controller.send_raw_tx(&account, raw_tx.clone()).await {
         Ok(data) => {
-            if let Err(e) = hset(
-                hash_to_block_number(),
+            if let Err(e) = CacheManager::save_valid_until_block(
                 hex_without_0x(data.as_slice()),
                 raw_tx.valid_until_block,
             ) {
-                Json(failure(anyhow::Error::from(e)))
+                Json(failure(e))
             } else {
                 Json(success(Value::String(data.display())))
             }
@@ -211,14 +208,12 @@ pub async fn send_tx(
 fn call_param(
     result: Call<'_>,
     config: &State<CacheConfig>,
-) -> Result<(Address, Address, Vec<u8>, u64)> {
+) -> Result<(Address, Address, Vec<u8>)> {
     let from = parse_addr(config.account.as_str())?;
     let to = parse_addr(result.to)?;
     let data = parse_data(result.data)?;
-    let height = result.height.unwrap_or(0);
-    Ok((from, to, data, height))
+    Ok((from, to, data))
 }
-
 ///Call
 #[post("/call", data = "<result>")]
 #[utoipa::path(
@@ -228,34 +223,28 @@ request_body = Call,
 )]
 pub async fn call(
     result: Json<Call<'_>>,
-    ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
-    let key = contract_key(
+    let (to_str, data_str, height, expire_time) = (
         remove_0x(result.to).to_string(),
-        result.data.to_string(),
+        remove_0x(result.data).to_string(),
         result.height.unwrap_or(0),
+        config.expire_time.unwrap() as usize,
     );
-    match load(key.clone()) {
-        Ok(data) => {
-            if data != String::default() {
-                return Json(success(Value::String(data)));
-            }
-        }
-        Err(e) => return Json(failure(anyhow::Error::from(e))),
-    };
-    let (from, to, data, height) = match call_param(result.0, config) {
+    let (from, to, data) = match call_param(result.0, config) {
         Ok(data) => data,
         Err(e) => return Json(failure(e)),
     };
-    match ctx.executor.call(from, to, data, height).await {
-        Ok(data) => {
-            let val = hex(data.value.as_slice());
-            match set_ex(key, val.clone(), config.expire_time.unwrap() as usize) {
-                Ok(_) => Json(success(Value::String(val))),
-                Err(e) => Json(failure(anyhow::Error::from(e))),
-            }
-        }
+    let key = contract_key(to_str, data_str, height);
+    match CacheManager::load_or_query(
+        key.clone(),
+        expire_time,
+        ctx.executor.call(from, to, data, height),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
         Err(e) => Json(failure(e)),
     }
 }

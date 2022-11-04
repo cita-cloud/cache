@@ -14,20 +14,28 @@
 
 extern crate rocket;
 
+use crate::cita_cloud::controller::ControllerBehaviour;
+use crate::cita_cloud::evm::EvmBehaviour;
+use crate::common::display::Display;
+use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
 use crate::core::context::Context;
-use crate::rest_api::common::CacheResult;
-use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::core::key_manager::{key, CacheBehavior, CacheManager};
+use crate::rest_api::common::{failure, success, CacheResult};
+use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use rocket::serde::json::Json;
-use serde_json::Value;
+use rocket::State;
+use serde_json::{json, Value};
 
 ///Get current block number
 #[get("/get-block-number")]
 #[utoipa::path(get, path = "/api/get-block-number")]
 pub async fn block_number(
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    Json(result)
+    match ctx.controller.get_block_number(false).await {
+        Ok(block_number) => Json(success(json!(block_number))),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get contract abi by contract address
@@ -41,11 +49,25 @@ params(
 )]
 pub async fn abi(
     address: &str,
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-abi address {}", address);
-    Json(result)
+    let address = remove_0x(address);
+    let data = match parse_addr(address) {
+        Ok(address) => address,
+        Err(e) => return Json(failure(e)),
+    };
+    match CacheManager::load_or_query(
+        key("abi".to_string(), address.to_string()),
+        config.expire_time.unwrap_or_default() as usize,
+        ctx.evm.get_abi(data),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get balance by account address
@@ -59,11 +81,25 @@ params(
 )]
 pub async fn balance(
     address: &str,
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-balance address {}", address);
-    Json(result)
+    let address = remove_0x(address);
+    let data = match parse_addr(address) {
+        Ok(address) => address,
+        Err(e) => return Json(failure(e)),
+    };
+    match CacheManager::load_or_query(
+        key("balance".to_string(), address.to_string()),
+        config.expire_time.unwrap_or_default() as usize,
+        ctx.evm.get_balance(data),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get block by height or hash
@@ -77,11 +113,36 @@ params(
 )]
 pub async fn block(
     hash_or_height: &str,
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-block hash_or_height {}", hash_or_height);
-    Json(result)
+    let hash_or_height = remove_0x(hash_or_height);
+    let expire_time = config.expire_time.unwrap_or_default() as usize;
+    let result = if let Ok(data) = parse_u64(hash_or_height) {
+        CacheManager::load_or_query(
+            key("block".to_string(), hash_or_height.to_string()),
+            expire_time,
+            ctx.controller.get_block_by_number(data),
+        )
+        .await
+    } else {
+        match parse_hash(hash_or_height) {
+            Ok(data) => {
+                CacheManager::load_or_query(
+                    key("block".to_string(), hash_or_height.to_string()),
+                    expire_time,
+                    ctx.controller.get_block_by_hash(data),
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        }
+    };
+    match result {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get code by contract address
@@ -95,11 +156,25 @@ params(
 )]
 pub async fn code(
     address: &str,
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-code address {}", address);
-    Json(result)
+    let address = remove_0x(address);
+    let data = match parse_addr(address) {
+        Ok(address) => address,
+        Err(e) => return Json(failure(e)),
+    };
+    match CacheManager::load_or_query(
+        key("code".to_string(), address.to_string()),
+        config.expire_time.unwrap_or_default() as usize,
+        ctx.evm.get_code(data),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get tx by hash
@@ -113,31 +188,49 @@ params(
 )]
 pub async fn tx(
     hash: &str,
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-tx hash {}", hash);
-    Json(result)
+    let hash = remove_0x(hash);
+    let data = match parse_hash(hash) {
+        Ok(hash) => hash,
+        Err(e) => return Json(failure(e)),
+    };
+    match CacheManager::load_or_query(
+        key("tx".to_string(), hash.to_string()),
+        config.expire_time.unwrap_or_default() as usize,
+        ctx.controller.get_tx(data),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get peers count
 #[get("/get-peers-count")]
 #[utoipa::path(get, path = "/api/get-peers-count")]
 pub async fn peers_count(
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    Json(result)
+    match ctx.controller.get_peer_count().await {
+        Ok(peer_count) => Json(success(json!(peer_count))),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get peers info
 #[get("/get-peers-info")]
 #[utoipa::path(get, path = "/api/get-peers-info")]
 pub async fn peers_info(
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    Json(result)
+    match ctx.controller.get_peers_info().await {
+        Ok(peers_info) => Json(success(peers_info.to_json())),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get nonce by account address
@@ -151,11 +244,25 @@ params(
 )]
 pub async fn account_nonce(
     address: &str,
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-account-nonce address {}", address);
-    Json(result)
+    let address = remove_0x(address);
+    let data = match parse_addr(address) {
+        Ok(address) => address,
+        Err(e) => return Json(failure(e)),
+    };
+    match CacheManager::load_or_query(
+        key("account-nonce".to_string(), address.to_string()),
+        config.expire_time.unwrap_or_default() as usize,
+        ctx.evm.get_tx_count(data),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get tx receipt by hash
@@ -169,31 +276,49 @@ params(
 )]
 pub async fn receipt(
     hash: &str,
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-receipt hash {}", hash);
-    Json(result)
+    let hash = remove_0x(hash);
+    let data = match parse_hash(hash) {
+        Ok(hash) => hash,
+        Err(e) => return Json(failure(e)),
+    };
+    match CacheManager::load_or_query(
+        key("receipt".to_string(), hash.to_string()),
+        config.expire_time.unwrap_or_default() as usize,
+        ctx.evm.get_receipt(data),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get chain version
 #[get("/get-version")]
 #[utoipa::path(get, path = "/api/get-version")]
 pub async fn version(
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    Json(result)
+    match ctx.controller.get_version().await {
+        Ok(version) => Json(success(json!(version))),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get system config
 #[get("/get-system-config")]
 #[utoipa::path(get, path = "/api/get-system-config")]
 pub async fn system_config(
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    Json(result)
+    match ctx.controller.get_system_config().await {
+        Ok(system_config) => Json(success(system_config.to_json())),
+        Err(e) => Json(failure(e)),
+    }
 }
 
 ///Get block hash by block number
@@ -207,9 +332,18 @@ params(
 )]
 pub async fn block_hash(
     block_number: usize,
-    result: CacheResult<Value>,
-    _ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-block-hash block_number {}", block_number);
-    Json(result)
+    match CacheManager::load_or_query(
+        key("block-hash".to_string(), block_number.to_string()),
+        config.expire_time.unwrap_or_default() as usize,
+        ctx.controller.get_block_hash(block_number as u64),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
 }

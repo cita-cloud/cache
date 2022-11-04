@@ -31,7 +31,7 @@ use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
 use crate::core::context::Context;
 use crate::redis::{
-    delete, exists, get, hdel, hget, hset, keys, pool, psubscribe, smembers, srem, zadd, zrange,
+    delete, exists, get, hdel, hget, hset, keys, pool, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem,
 };
 use ::log::LevelFilter;
@@ -209,17 +209,17 @@ async fn main() {
         expire_time,
     ));
     tokio::spawn(CheckTxTask::schedule(
-        timing_internal_sec,
+        timing_internal_sec * 2,
         timing_batch,
         expire_time,
     ));
     tokio::spawn(EvictExpiredKeyTask::schedule(
-        timing_internal_sec,
+        timing_internal_sec * 10,
         timing_batch,
         expire_time,
     ));
     tokio::spawn(LazyEvictExpiredKeyTask::schedule(
-        timing_internal_sec,
+        timing_internal_sec * 2,
         timing_batch,
         expire_time,
     ));

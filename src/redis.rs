@@ -38,15 +38,6 @@ pub fn con() -> PooledConnection<RedisConnectionManager> {
     REDIS_POOL.get().unwrap().get().unwrap()
 }
 
-pub fn load(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
-    if con().exists(key.clone())? {
-        let data: String = con().get(key)?;
-        Ok(data)
-    } else {
-        Ok(String::default())
-    }
-}
-
 pub fn get(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
     con().get(key)
 }
@@ -147,6 +138,7 @@ pub fn zrem<T: Clone + Default + ToRedisArgs>(
     con().zrem(zkey, member)
 }
 
+#[allow(dead_code)]
 pub fn zrange<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     zkey: String,
     start: isize,

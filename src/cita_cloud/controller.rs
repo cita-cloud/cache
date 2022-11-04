@@ -20,9 +20,8 @@ use prost::Message;
 
 use crate::cita_cloud::crypto::CryptoBehaviour;
 use crate::common::crypto::{ArrayLike, Hash};
-use crate::common::util::{hex_without_0x, timestamp};
-use crate::core::key_manager::{hash_to_tx, uncommitted_tx_key};
-use crate::redis::{hset, zadd};
+use crate::common::util::hex_without_0x;
+use crate::core::key_manager::{CacheManager, TxBehavior};
 use crate::CryptoClient;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
@@ -37,7 +36,6 @@ use cita_cloud_proto::{
     controller::{BlockNumber, Flag, SystemConfig},
 };
 use tokio::sync::OnceCell;
-
 #[derive(Debug, Clone)]
 pub struct ControllerClient {
     retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>,
@@ -358,15 +356,9 @@ where
         };
         raw.encode(&mut buf)?;
 
-        let tx_str = hex_without_0x(&buf[..]);
-        let timestamp = timestamp();
+        CacheManager::enqueue(hex_without_0x(hash), hex_without_0x(&buf[..]))?;
 
-        let hash_str = hex_without_0x(hash);
-        zadd(uncommitted_tx_key(), hash_str.clone(), timestamp)?;
-
-        hset(hash_to_tx(), hash_str, tx_str)?;
-
-        Ok(Hash::try_from_slice(hash).unwrap())
+        Ok(Hash::try_from_slice(hash)?)
         // self.send_raw(raw).await.context("failed to send raw")
     }
 
