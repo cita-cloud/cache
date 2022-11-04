@@ -12,8 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::redis::Pool;
+use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use tokio::sync::OnceCell;
+
 pub const SUCCESS: u64 = 1;
 pub const FAILURE: u64 = 0;
+pub const ONE_THOUSAND: u64 = 1000;
 pub const SUCCESS_MESSAGE: &str = "success";
 pub const KEY_PREFIX: &str = "cache";
 pub const HASH_TYPE: &str = "hash";
@@ -32,3 +37,23 @@ pub const EVICT_TO_ROUGH_TIME: &str = "evict_to_rough_time";
 pub const RECEIPT: &str = "receipt";
 pub const TX: &str = "tx";
 pub const CONTRACT_KEY: &str = "contract";
+pub const EXPIRED_KEY_EVENT_AT_ALL_DB: &str = "__keyevent@*__:expired";
+
+pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
+pub static CONTROLLER_CLIENT: OnceCell<ControllerClient> = OnceCell::const_new();
+pub static EXECUTOR_CLIENT: OnceCell<ExecutorClient> = OnceCell::const_new();
+pub static EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
+pub static CRYPTO_CLIENT: OnceCell<CryptoClient> = OnceCell::const_new();
+pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
+
+pub fn rough_internal() -> u64 {
+    *ROUGH_INTERNAL.get().unwrap() * ONE_THOUSAND
+}
+
+pub fn controller() -> ControllerClient {
+    CONTROLLER_CLIENT.get().unwrap().clone()
+}
+
+pub fn evm() -> EvmClient {
+    EVM_CLIENT.get().unwrap().clone()
+}

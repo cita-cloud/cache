@@ -11,51 +11,29 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-extern crate rocket;
-
-use crate::common::util::{clean_up_key, lazy_evict_to_time, rough_time, time_pair, timestamp};
-use crate::evict_to_rough_time;
+use crate::common::constant::REDIS_POOL;
 use r2d2::PooledConnection;
 use r2d2_redis::redis::{Commands, ControlFlow, FromRedisValue, Msg, PubSubCommands, ToRedisArgs};
 use r2d2_redis::RedisConnectionManager;
 use std::collections::HashSet;
 use std::fmt::Display;
 use std::hash::Hash;
-use tokio::sync::OnceCell;
 
-pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
-pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
 // Pool initiation.
 // Call it starting an app and store a pool as a rocket managed state.
-pub fn pool(redis_addr: String, rough_internal: u64) -> Pool {
+pub fn pool(redis_addr: String) -> Pool {
     let manager = RedisConnectionManager::new(redis_addr).expect("connection manager");
     let pool = Pool::new(manager).expect("db pool");
     if let Err(e) = REDIS_POOL.set(pool.clone()) {
         error!("set redis pool fail: {:?}", e)
     };
-    if let Err(e) = ROUGH_INTERNAL.set(rough_internal) {
-        error!("set rough internal fail: {:?}", e)
-    }
     pool
 }
 
 pub type Pool = r2d2::Pool<RedisConnectionManager>;
 
 pub fn con() -> PooledConnection<RedisConnectionManager> {
-    REDIS_POOL.get().unwrap().get().unwrap()
-}
-
-pub fn rough_internal() -> u64 {
-    *ROUGH_INTERNAL.get().unwrap()
-}
-
-pub fn load(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
-    if con().exists(key.clone())? {
-        let data: String = con().get(key)?;
-        Ok(data)
-    } else {
-        Ok(String::default())
-    }
+    REDIS_POOL.get().unwrap().try_get().unwrap()
 }
 
 pub fn get(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
@@ -66,26 +44,10 @@ pub fn ttl(key: String) -> Result<isize, r2d2_redis::redis::RedisError> {
     con().ttl(key)
 }
 
-fn expire_inner(key: String, expire_time: usize) -> Result<u64, r2d2_redis::redis::RedisError> {
+pub fn expire(key: String, expire_time: usize) -> Result<u64, r2d2_redis::redis::RedisError> {
     con().expire(key, expire_time)
 }
 
-pub fn expire(key: String, seconds: usize) -> Result<u64, r2d2_redis::redis::RedisError> {
-    let old_expire_time = hget(lazy_evict_to_time(), key.clone())?;
-    let rough_internal = rough_internal();
-    let old_rough_time = rough_time(old_expire_time, rough_internal);
-
-    let (expire_time, rough_time) = time_pair(timestamp(), seconds, rough_internal);
-
-    smove(
-        clean_up_key(old_rough_time),
-        clean_up_key(rough_time),
-        key.clone(),
-    )?;
-    hset(lazy_evict_to_time(), key.clone(), expire_time)?;
-    hset(evict_to_rough_time(), key.clone(), clean_up_key(rough_time))?;
-    expire_inner(key, seconds)
-}
 #[allow(dead_code)]
 pub fn exists(key: String) -> Result<bool, r2d2_redis::redis::RedisError> {
     con().exists(key)
@@ -99,23 +61,12 @@ pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     con().set::<String, T, String>(key, val)
 }
 
-fn set_ex_inner<T: Clone + Default + FromRedisValue + ToRedisArgs>(
-    key: String,
-    val: T,
-    seconds: usize,
-) -> Result<String, r2d2_redis::redis::RedisError> {
-    con().set_ex::<String, T, String>(key, val, seconds)
-}
 pub fn set_ex<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     key: String,
     val: T,
     seconds: usize,
 ) -> Result<String, r2d2_redis::redis::RedisError> {
-    let (expire_time, rough_time) = time_pair(timestamp(), seconds, rough_internal());
-    sadd(clean_up_key(rough_time), key.clone())?;
-    hset(lazy_evict_to_time(), key.clone(), expire_time)?;
-    hset(evict_to_rough_time(), key.clone(), clean_up_key(rough_time))?;
-    set_ex_inner(key, val, seconds)
+    con().set_ex::<String, T, String>(key, val, seconds)
 }
 
 #[allow(dead_code)]
@@ -185,6 +136,7 @@ pub fn zrem<T: Clone + Default + ToRedisArgs>(
     con().zrem(zkey, member)
 }
 
+#[allow(dead_code)]
 pub fn zrange<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     zkey: String,
     start: isize,

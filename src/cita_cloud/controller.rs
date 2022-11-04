@@ -20,8 +20,8 @@ use prost::Message;
 
 use crate::cita_cloud::crypto::CryptoBehaviour;
 use crate::common::crypto::{ArrayLike, Hash};
-use crate::common::util::{hash_to_tx, hex_without_0x, timestamp, uncommitted_tx_key};
-use crate::redis::{hset, zadd};
+use crate::common::util::hex_without_0x;
+use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::CryptoClient;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
@@ -36,7 +36,6 @@ use cita_cloud_proto::{
     controller::{BlockNumber, Flag, SystemConfig},
 };
 use tokio::sync::OnceCell;
-
 #[derive(Debug, Clone)]
 pub struct ControllerClient {
     retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>,
@@ -347,6 +346,7 @@ where
     where
         S: SignerBehaviour + Send + Sync,
     {
+        let valid_until_block = raw_tx.valid_until_block;
         let mut buf = vec![];
         let raw = signer.sign_raw_tx(raw_tx).await;
         let empty = Vec::new();
@@ -357,16 +357,13 @@ where
         };
         raw.encode(&mut buf)?;
 
-        let tx_str = hex_without_0x(&buf[..]);
-        let timestamp = timestamp();
+        CacheManager::enqueue(
+            hex_without_0x(hash),
+            hex_without_0x(&buf[..]),
+            valid_until_block,
+        )?;
 
-        let hash_str = hex_without_0x(hash);
-        zadd(uncommitted_tx_key(), hash_str.clone(), timestamp)?;
-
-        hset(hash_to_tx(), hash_str, tx_str)?;
-
-        Ok(Hash::try_from_slice(hash).unwrap())
-        // self.send_raw(raw).await.context("failed to send raw")
+        Ok(Hash::try_from_slice(hash)?)
     }
 
     async fn send_raw_utxo<S>(&self, signer: &S, raw_utxo: CloudUtxoTransaction) -> Result<Hash>

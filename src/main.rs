@@ -19,30 +19,24 @@ mod health_check;
 mod redis;
 mod rest_api;
 
-use crate::cita_cloud::controller::{ControllerBehaviour, ControllerClient};
+use crate::cita_cloud::controller::ControllerClient;
 use crate::cita_cloud::crypto::CryptoClient;
-use crate::cita_cloud::evm::{EvmBehaviour, EvmClient};
+use crate::cita_cloud::evm::EvmClient;
 use crate::cita_cloud::executor::ExecutorClient;
 use crate::common::cache_log::LOGGER;
-use crate::common::constant::{RECEIPT, TX};
+use crate::common::constant::{
+    CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
+};
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
-use crate::common::util::{
-    clean_up_key, committed_tx_key, contract_pattern, current_time, evict_to_rough_time,
-    hash_to_block_number, hash_to_tx, hex_without_0x, init_local_utc_offset, key,
-    lazy_evict_to_time, parse_data, timestamp, uncommitted_tx_key,
-};
 use crate::core::context::Context;
 use crate::redis::{
-    delete, exists, get, hdel, hget, hset, keys, pool, psubscribe, set_ex, smembers, srem, zadd,
-    zrange, zrange_withscores, zrem,
+    delete, exists, get, hdel, hget, hset, keys, pool, psubscribe, smembers, srem, zadd,
+    zrange_withscores, zrem,
 };
 use ::log::LevelFilter;
-use anyhow::{Error, Result};
-use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
+use anyhow::Result;
 use log::{set_logger, set_max_level};
-use prost::Message;
-use r2d2_redis::redis::{ControlFlow, Msg};
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
@@ -53,9 +47,18 @@ use rocket::config::LogLevel;
 use rocket::fairing::AdHoc;
 use rocket::{routes, Build, Rocket};
 use serde::Deserialize;
-use tokio::time;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+
+use crate::common::util::init_local_utc_offset;
+use crate::core::key_manager::{CacheBehavior, CacheManager};
+use crate::core::schedule_task::{
+    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, ScheduleTask,
+};
+use rocket::config::Config;
+use rocket::figment::providers::{Env, Format, Toml};
+use rocket::figment::{Figment, Profile};
+use serde_json::{json, Value};
 
 #[macro_use]
 extern crate rocket;
@@ -91,211 +94,7 @@ fn rocket(figment: Figment) -> Rocket<Build> {
         .register("/api", catchers![api_not_found])
 }
 
-async fn commit_tx_schedule(
-    timing_internal_sec: u64,
-    expire_time: usize,
-    timing_batch: isize,
-    controller: ControllerClient,
-) {
-    let mut internal = time::interval(time::Duration::from_secs(timing_internal_sec));
-    loop {
-        internal.tick().await;
-        if let Err(e) = commit_tx(timing_batch, expire_time, controller.clone()).await {
-            warn!("commit tx error: {}", e);
-        }
-    }
-}
-
-async fn commit_tx(
-    timing_batch: isize,
-    expire_time: usize,
-    controller: ControllerClient,
-) -> Result<()> {
-    let members = zrange_withscores::<String>(uncommitted_tx_key(), 0, timing_batch)?;
-    for (tx_hash, score) in members {
-        let tx = match hget::<String>(hash_to_tx(), tx_hash.clone()) {
-            Ok(data) => data,
-            Err(e) => {
-                warn!(
-                    "hget hkey: {}, key: {}, error: {}",
-                    hash_to_tx(),
-                    tx_hash.clone(),
-                    e
-                );
-                return Err(Error::from(e));
-            }
-        };
-        let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str())?[..])?;
-        match controller.send_raw(decoded.clone()).await {
-            Ok(data) => {
-                zrem(uncommitted_tx_key(), tx_hash.clone())?;
-                zadd(committed_tx_key(), tx_hash.clone(), score)?;
-                let hash_str = hex_without_0x(&data);
-                info!("commit tx success, hash: {}", hash_str);
-            }
-            Err(e) => {
-                let err_str = format!("{}", e);
-                let empty = Vec::new();
-                let hash = if let Some(Tx::NormalTx(ref normal_tx)) = decoded.tx {
-                    &normal_tx.transaction_hash
-                } else {
-                    empty.as_slice()
-                };
-                let hash = hex_without_0x(hash).to_string();
-                set_ex(
-                    key(RECEIPT.to_string(), hash.clone()),
-                    err_str.clone(),
-                    expire_time * 5,
-                )?;
-                set_ex(key(TX.to_string(), hash.clone()), err_str, expire_time * 5)?;
-                clean_key(hash.clone()).await?;
-                warn!("commit tx fail, hash: {}", hash);
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn clean_key(tx_hash: String) -> Result<()> {
-    zrem(committed_tx_key(), tx_hash.clone())?;
-    zrem(uncommitted_tx_key(), tx_hash.clone())?;
-    hdel(hash_to_tx(), tx_hash.clone())?;
-    hdel(hash_to_block_number(), tx_hash)?;
-    Ok(())
-}
-
-fn clean_expired_key(key: String, member: String) -> Result<()> {
-    hdel(lazy_evict_to_time(), member.clone())?;
-    hdel(evict_to_rough_time(), member.clone())?;
-    srem(key, member)?;
-    Ok(())
-}
-
-async fn check_tx(
-    timing_batch: isize,
-    expire_time: usize,
-    controller: ControllerClient,
-    evm: EvmClient,
-) -> Result<()> {
-    let members = zrange::<String>(committed_tx_key(), 0, timing_batch)?;
-    for tx_hash in members {
-        let hash = Hash::try_from_slice(&parse_data(tx_hash.clone().as_str()).unwrap()[..])?;
-        match evm.get_receipt(hash).await {
-            Ok(receipt) => {
-                set_ex(
-                    key(RECEIPT.to_string(), tx_hash.clone()),
-                    receipt.display(),
-                    expire_time,
-                )?;
-                info!("get tx receipt and save success, hash: {}", tx_hash.clone());
-                match controller.get_tx(hash).await {
-                    Ok(tx) => {
-                        set_ex(
-                            key(TX.to_string(), tx_hash.clone()),
-                            tx.display(),
-                            expire_time * 5,
-                        )?;
-                        info!("get tx and save success, hash: {}", tx_hash.clone());
-                    }
-                    Err(e) => {
-                        set_ex(
-                            key(TX.to_string(), tx_hash.clone()),
-                            format!("{}", e),
-                            expire_time * 5,
-                        )?;
-                        info!("retry get tx, hash: {}", tx_hash.clone());
-                    }
-                }
-
-                let tx = hget::<String>(hash_to_tx(), tx_hash.clone())?;
-                let decoded: RawTransaction = Message::decode(parse_data(tx.as_str())?.as_slice())?;
-                if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
-                    if let Some(transaction) = normal_tx.transaction {
-                        let to_addr = transaction.to;
-                        let addr = hex_without_0x(&to_addr);
-                        let pattern = contract_pattern(addr);
-                        if let Ok(list) = keys::<String>(pattern) {
-                            if !list.is_empty() {
-                                delete(list)?;
-                            }
-                        }
-                    }
-                }
-                clean_key(tx_hash.clone()).await?;
-                continue;
-            }
-            Err(e) => {
-                set_ex(
-                    key(RECEIPT.to_string(), tx_hash.clone()),
-                    format!("{}", e),
-                    expire_time,
-                )?;
-                info!("retry -> get receipt, hash: {}", tx_hash.clone());
-            }
-        }
-        let current = controller.get_block_number(false).await?;
-        let config = controller.get_system_config().await?;
-        let valid_until_block = hget::<u64>(hash_to_block_number(), tx_hash.clone())?;
-        if valid_until_block <= current || valid_until_block > (current + config.block_limit as u64)
-        {
-            warn!("retry -> get receipt, timeout hash: {}", tx_hash.clone());
-            set_ex(
-                key(RECEIPT.to_string(), tx_hash.clone()),
-                "timeout".to_string(),
-                expire_time,
-            )?;
-            clean_key(tx_hash).await?
-        }
-    }
-    Ok(())
-}
-async fn check_tx_schedule(
-    timing_internal_sec: u64,
-    timing_batch: isize,
-    expire_time: usize,
-    controller: ControllerClient,
-    evm: EvmClient,
-) {
-    let mut internal = time::interval(time::Duration::from_secs(2 * timing_internal_sec));
-    loop {
-        internal.tick().await;
-        if let Err(e) = check_tx(timing_batch, expire_time, controller.clone(), evm.clone()).await {
-            warn!("check tx error: {}", e);
-        }
-    }
-}
-
-async fn check_expired_key(timing_internal_sec: u64, expire_time: usize) {
-    let mut internal = time::interval(time::Duration::from_secs(2 * timing_internal_sec));
-    loop {
-        internal.tick().await;
-        if let Err(e) = evict_expired_key(timing_internal_sec, expire_time).await {
-            warn!("check expired key error: {}", e);
-        }
-    }
-}
-
-async fn evict_expired_key(timing_internal_sec: u64, expire_time: usize) -> Result<()> {
-    let mut internal = time::interval(time::Duration::from_secs(2 * timing_internal_sec));
-    loop {
-        internal.tick().await;
-        let current = timestamp();
-
-        let time = current - current % (expire_time * 1000) as u64;
-
-        let key = clean_up_key(time);
-        if exists(key.clone())? {
-            for member in smembers::<String>(key.clone())? {
-                if get(member.clone()).is_err() {
-                    info!("lazy evict expired key: {}", member);
-                }
-                clean_expired_key(key.clone(), member.clone())?;
-            }
-        }
-    }
-}
-
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(crate = "rocket::serde")]
 pub struct CacheConfig {
     controller_addr: Option<String>,
@@ -351,7 +150,7 @@ async fn set_cache_logger(level: LevelFilter) -> Result<()> {
     Ok(())
 }
 
-async fn param(
+async fn set_param(
     config: CacheConfig,
 ) -> (
     Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
@@ -364,8 +163,22 @@ async fn param(
         config.executor_addr.unwrap_or_default(),
         config.crypto_addr.unwrap_or_default(),
         config.redis_addr.unwrap_or_default(),
-        config.rough_internal.unwrap_or_default(),
     );
+    if let Err(e) = CONTROLLER_CLIENT.set(ctx.controller.clone()) {
+        panic!("store controller client error: {:?}", e);
+    }
+    if let Err(e) = EXECUTOR_CLIENT.set(ctx.executor.clone()) {
+        panic!("store executor client error: {:?}", e);
+    }
+    if let Err(e) = EVM_CLIENT.set(ctx.evm.clone()) {
+        panic!("store evm client error: {:?}", e);
+    }
+    if let Err(e) = CRYPTO_CLIENT.set(ctx.crypto.clone()) {
+        panic!("store crypto client error: {:?}", e);
+    }
+    if let Err(e) = ROUGH_INTERNAL.set(config.rough_internal.unwrap_or_default()) {
+        panic!("set rough internal fail: {:?}", e)
+    }
     (
         ctx,
         config.timing_internal_sec.unwrap_or_default(),
@@ -373,30 +186,6 @@ async fn param(
         config.expire_time.unwrap_or_default() as usize,
     )
 }
-
-fn clean(msg: Msg) -> Result<String> {
-    let expired_key = msg.get_payload::<String>()?;
-    let key = hget(evict_to_rough_time(), expired_key.clone())?;
-    clean_expired_key(key, expired_key.clone())?;
-    Ok(expired_key)
-}
-
-async fn subscribe_expired_event() {
-    if let Err(e) = psubscribe("__keyevent@*__:expired".to_string(), |msg| {
-        match clean(msg) {
-            Ok(expired_key) => info!("evict expired key: {}", expired_key),
-            Err(e) => warn!("evict expired failed: {}", e),
-        }
-        ControlFlow::Continue
-    }) {
-        warn!("subscribe channel failed: {}", e);
-    }
-}
-
-use rocket::config::Config;
-use rocket::figment::providers::{Env, Format, Toml};
-use rocket::figment::{Figment, Profile};
-use serde_json::{json, Value};
 
 #[rocket::main]
 async fn main() {
@@ -413,23 +202,31 @@ async fn main() {
         panic!("set cache logger failed: {}", e);
     }
     info!("cache config: {}", config.display());
-    let (ctx, timing_internal_sec, timing_batch, expire_time) = param(config).await;
-    tokio::spawn(commit_tx_schedule(
-        timing_internal_sec,
-        expire_time,
-        timing_batch,
-        ctx.controller.clone(),
-    ));
-    tokio::spawn(check_tx_schedule(
+    let (ctx, timing_internal_sec, timing_batch, expire_time) = set_param(config.clone()).await;
+    match CacheManager::set_up().await {
+        Ok(_) => info!("cache manager set up success!"),
+        Err(e) => warn!("cache manager set up fail: {}", e),
+    }
+    tokio::spawn(CommitTxTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
-        ctx.controller.clone(),
-        ctx.evm.clone(),
     ));
-    tokio::spawn(check_expired_key(timing_internal_sec, expire_time));
-
-    tokio::spawn(subscribe_expired_event());
+    tokio::spawn(CheckTxTask::schedule(
+        timing_internal_sec * 2,
+        timing_batch,
+        expire_time,
+    ));
+    tokio::spawn(EvictExpiredKeyTask::schedule(
+        timing_internal_sec * 10,
+        timing_batch,
+        expire_time,
+    ));
+    tokio::spawn(LazyEvictExpiredKeyTask::schedule(
+        timing_internal_sec * 2,
+        timing_batch,
+        expire_time,
+    ));
     let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<CacheConfig>());
 
     if let Err(e) = rocket.manage(ctx).launch().await {
