@@ -65,7 +65,7 @@ data:
     crypto_addr = "http://127.0.0.1:50005"
     redis_addr = "redis://default:rivtower@127.0.0.1:6379"
     timing_internal_sec = 1
-    timing_batch = 100
+    timing_batch = 400
     log_level = "normal"
   
     [release]
@@ -409,7 +409,7 @@ spec:
         - command:
             - /bin/sh
             - "-c"
-            - "ROCKET_CONFIG=/etc/cita-cloud/config/Cache.toml ROCKET_PROFILE=test ROCKET_ACCOUNT=757ca1c731a3d7e9bdbd0e22ee65918674a77bd7 cache"
+            - "ROCKET_CONFIG=/etc/cita-cloud/config/Cache.toml ROCKET_PROFILE=test ROCKET_ACCOUNT=757ca1c731a3d7e9bdbd0e22ee65918674a77bd7 ROCKET_WORKERS=32 cache"
           name: cache
           image: "docker.io/citacloud/cache:latest"
           imagePullPolicy: Always

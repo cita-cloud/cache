@@ -400,7 +400,14 @@ impl CacheBehavior for CacheManager {
     async fn commit(timing_batch: isize, expire_time: usize) -> Result<()> {
         let members = CacheManager::uncommitted_txs(timing_batch)?;
         for (tx_hash, score) in members {
-            let tx = Self::original_tx(tx_hash.clone())?;
+            let tx = match Self::original_tx(tx_hash.clone()) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    Self::save_error(tx_hash.clone(), format!("{}", e), expire_time * 5)?;
+                    Self::clean_up_tx(tx_hash.clone())?;
+                    continue;
+                }
+            };
             let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str())?[..])?;
             match controller().send_raw(decoded.clone()).await {
                 Ok(data) => {
