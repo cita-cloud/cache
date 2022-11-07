@@ -98,7 +98,6 @@ pub fn hvals<T: Clone + Default + ToRedisArgs + Display + FromRedisValue + Eq + 
     con().hvals(hkey)
 }
 
-#[allow(dead_code)]
 pub fn hexists<T: Clone + Default + ToRedisArgs + Display>(
     hkey: String,
     key: T,

@@ -20,7 +20,7 @@ use crate::common::constant::{
     ZSET_TYPE,
 };
 use crate::common::util::{hex_without_0x, parse_data, timestamp};
-use crate::redis::{sadd, smove, ttl};
+use crate::redis::{hexists, sadd, smove, ttl};
 use crate::{
     delete, exists, get, hdel, hget, hset, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
@@ -161,9 +161,9 @@ pub trait CacheBehavior: ExpiredBehavior + ValBehavior + ContractBehavior {
         T: Display,
         F: Send + Future<Output = Result<T>>;
 
-    fn save_tx(tx_hash: String, tx: String, expire_time: usize) -> Result<()>;
+    fn save_tx_content(tx_hash: String, tx: String, expire_time: usize) -> Result<()>;
 
-    fn save_receipt(tx_hash: String, tx: String, expire_time: usize) -> Result<()>;
+    fn save_receipt_content(tx_hash: String, tx: String, expire_time: usize) -> Result<()>;
 
     fn save_error(hash: String, err_str: String, expire_time: usize) -> Result<()>;
 
@@ -351,25 +351,26 @@ impl CacheBehavior for CacheManager {
         }
     }
 
-    fn save_tx(tx_hash: String, tx: String, expire_time: usize) -> Result<()> {
-        Self::set_ex(key(TX.to_string(), tx_hash), tx, expire_time)?;
+    fn save_tx_content(tx_hash: String, content: String, expire_time: usize) -> Result<()> {
+        Self::set_ex(key(TX.to_string(), tx_hash), content, expire_time)?;
         Ok(())
     }
 
-    fn save_receipt(tx_hash: String, tx: String, expire_time: usize) -> Result<()> {
-        Self::set_ex(key(RECEIPT.to_string(), tx_hash), tx, expire_time)?;
+    fn save_receipt_content(tx_hash: String, content: String, expire_time: usize) -> Result<()> {
+        Self::set_ex(key(RECEIPT.to_string(), tx_hash), content, expire_time)?;
         Ok(())
     }
 
     fn save_error(hash: String, err_str: String, expire_time: usize) -> Result<()> {
-        Self::save_tx(hash.clone(), err_str.clone(), expire_time)?;
-        Self::save_receipt(hash, err_str, expire_time)?;
-        Ok(())
+        Self::save_tx_content(hash.clone(), err_str.clone(), expire_time)?;
+        Self::save_receipt_content(hash, err_str, expire_time)
     }
 
     fn clean_up_expired_by_key(expired_key: String) -> Result<String> {
-        let key = hget(evict_to_rough_time(), expired_key.clone())?;
-        Self::clean_up_expired(key, expired_key.clone())?;
+        if hexists(evict_to_rough_time(), expired_key.clone())? {
+            let key = hget(evict_to_rough_time(), expired_key.clone())?;
+            Self::clean_up_expired(key, expired_key.clone())?;
+        }
         Ok(expired_key)
     }
 
@@ -400,7 +401,14 @@ impl CacheBehavior for CacheManager {
     async fn commit(timing_batch: isize, expire_time: usize) -> Result<()> {
         let members = CacheManager::uncommitted_txs(timing_batch)?;
         for (tx_hash, score) in members {
-            let tx = Self::original_tx(tx_hash.clone())?;
+            let tx = match Self::original_tx(tx_hash.clone()) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    Self::save_error(tx_hash.clone(), format!("{}", e), expire_time * 5)?;
+                    Self::clean_up_tx(tx_hash.clone())?;
+                    continue;
+                }
+            };
             let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str())?[..])?;
             match controller().send_raw(decoded.clone()).await {
                 Ok(data) => {
@@ -439,7 +447,7 @@ impl CacheBehavior for CacheManager {
                     (format!("{}", e), expire_time * 5, false)
                 }
             };
-            CacheManager::save_receipt(tx_hash.clone(), receipt, expire_time)?;
+            CacheManager::save_receipt_content(tx_hash.clone(), receipt, expire_time)?;
             if is_ok {
                 let (tx, expire_time) = match controller().get_tx(hash).await {
                     Ok(tx) => {
@@ -451,7 +459,7 @@ impl CacheBehavior for CacheManager {
                         (format!("{}", e), expire_time * 5)
                     }
                 };
-                CacheManager::save_tx(tx_hash.clone(), tx, expire_time)?;
+                CacheManager::save_tx_content(tx_hash.clone(), tx, expire_time)?;
                 CacheManager::try_clean_contract_data(tx_hash.clone())?;
                 CacheManager::clean_up_tx(tx_hash.clone())?;
                 continue;
@@ -506,10 +514,15 @@ impl CacheBehavior for CacheManager {
         let current = current_rough_time();
         for key in keys::<String>(clean_up_pattern())? {
             let rough_time_str: &str = &key[clean_up_prefix().len()..];
-            let rough_time: u64 = rough_time_str.parse::<u64>()?;
-            if rough_time < current {
-                for member in smembers::<String>(key)? {
-                    Self::clean_up_expired_by_key(member)?;
+            if let Ok(rough_time) = rough_time_str.parse::<u64>() {
+                if rough_time < current {
+                    if let Ok(members) = smembers::<String>(key) {
+                        for member in members {
+                            if Self::clean_up_expired_by_key(member.clone()).is_ok() {
+                                info!("set up -> clean up expired key: {} success", member);
+                            }
+                        }
+                    }
                 }
             }
         }

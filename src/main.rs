@@ -213,7 +213,7 @@ async fn main() {
         expire_time,
     ));
     tokio::spawn(CheckTxTask::schedule(
-        timing_internal_sec * 2,
+        timing_internal_sec,
         timing_batch,
         expire_time,
     ));
