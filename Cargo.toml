@@ -16,9 +16,9 @@ log = "0.4"
 rand = "0.8"
 
 
-tonic = "0.7"
-prost = "0.10"
-cita_cloud_proto = "6.6.1"
+tonic = "0.8"
+prost = "0.11"
+cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
 anyhow = "1.0"
 hex = "0.4"
 time = { version = "0.3", features = ["formatting", "local-offset"] }
@@ -38,10 +38,8 @@ secp256k1 = { version = "0.24", features = ["rand-std", "recovery"] }
 tentacle-multiaddr = "0.3"
 tempfile = "3.3"
 toml = "0.5"
-cloud-util = "0.5.0"
-cloud-code = "0.5.1"
-
-
+cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
+status_code = { package = "cloud-code", git = "https://github.com/cita-cloud/status_code" }
 
 redis = "0.21.5"
 r2d2 = "*"
@@ -49,4 +47,4 @@ r2d2_redis = "*"
 thiserror =  "1"
 
 [build-dependencies]
-tonic-build = "0.7"
+tonic-build = "0.8"

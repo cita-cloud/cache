@@ -109,6 +109,7 @@ pub struct CacheConfig {
     expire_time: Option<u64>,
     //collect expired keys in rough_internal seconds
     rough_internal: Option<u64>,
+    workers: u64,
 }
 
 impl Default for CacheConfig {
@@ -124,6 +125,7 @@ impl Default for CacheConfig {
             log_level: LogLevel::Normal,
             expire_time: Some(60),
             rough_internal: Some(10),
+            workers: 1,
         }
     }
 }
@@ -140,6 +142,7 @@ impl Display for CacheConfig {
             "log_level": self.log_level,
             "expire_time": self.expire_time,
             "rough_internal": self.rough_internal,
+            "workers": self.workers,
         })
     }
 }

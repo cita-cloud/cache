@@ -15,6 +15,7 @@
 use crate::common::util::current_time;
 use log::{Level, Metadata, Record};
 use rocket::yansi::Paint;
+use std::thread;
 
 pub static LOGGER: CacheLogger = CacheLogger;
 
@@ -33,33 +34,38 @@ impl log::Log for CacheLogger {
             let level = record.level();
             match level {
                 Level::Error => println!(
-                    "[{}] [{}] {}",
+                    "[{}] [{}] [{:?}] {}",
                     Paint::red(record.level()).wrap(),
                     current_time(),
+                    Paint::cyan(thread::current().id()),
                     Paint::red(record.args()).wrap()
                 ),
                 Level::Warn => println!(
-                    "[{}] [{}] {}",
+                    "[{}] [{}] [{:?}] {}",
                     Paint::yellow(record.level()).wrap(),
                     current_time(),
+                    Paint::cyan(thread::current().id()),
                     Paint::yellow(record.args()).wrap()
                 ),
                 Level::Info => println!(
-                    "[{}] [{}] {}",
+                    "[{}] [{}] [{:?}] {}",
                     Paint::green(record.level()).wrap(),
                     current_time(),
+                    Paint::cyan(thread::current().id()),
                     Paint::green(record.args()).wrap()
                 ),
                 Level::Debug => println!(
-                    "[{}] [{}] {}",
+                    "[{}] [{}] [{:?}] {}",
                     Paint::green(record.level()).wrap(),
                     current_time(),
+                    Paint::cyan(thread::current().id()),
                     Paint::green(record.args()).wrap()
                 ),
                 Level::Trace => println!(
-                    "[{}] [{}] {}",
+                    "[{}] [{}] [{:?}] {}",
                     Paint::black(record.level()).wrap(),
                     current_time(),
+                    Paint::cyan(thread::current().id()),
                     Paint::black(record.args()).wrap()
                 ),
             }
