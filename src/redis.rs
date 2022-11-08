@@ -98,10 +98,7 @@ pub fn hvals<T: Clone + Default + ToRedisArgs + Display + FromRedisValue + Eq + 
     con().hvals(hkey)
 }
 
-pub fn hexists(
-    hkey: String,
-    key: String,
-) -> Result<bool, r2d2_redis::redis::RedisError> {
+pub fn hexists(hkey: String, key: String) -> Result<bool, r2d2_redis::redis::RedisError> {
     con().hexists(hkey, key)
 }
 
