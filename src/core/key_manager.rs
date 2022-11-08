@@ -368,7 +368,7 @@ impl CacheBehavior for CacheManager {
 
     fn clean_up_expired_by_key(expired_key: String) -> Result<String> {
         if hexists(evict_to_rough_time(), expired_key.clone())? {
-            let key = hget(evict_to_rough_time(), expired_key.clone())?;
+            let key = hget::<String>(evict_to_rough_time(), expired_key.clone())?;
             Self::clean_up_expired(key, expired_key.clone())?;
         }
         Ok(expired_key)
