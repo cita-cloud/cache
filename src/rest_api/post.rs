@@ -13,17 +13,13 @@
 // limitations under the License.
 
 use anyhow::Context as Ctx;
-use std::{u64, usize};
+use std::u64;
 
 use crate::cita_cloud::account::Account;
-use crate::cita_cloud::controller::{
-    ControllerBehaviour, SignerBehaviour, TransactionSenderBehaviour,
-};
-use crate::cita_cloud::evm::EvmBehaviour;
+use crate::cita_cloud::controller::{ControllerBehaviour, TransactionSenderBehaviour};
 use crate::cita_cloud::executor::ExecutorBehaviour;
-use crate::common::crypto::Address;
 use crate::common::display::Display;
-use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
+use crate::common::util::{parse_addr, parse_data, parse_value, remove_0x};
 use crate::core::context::Context;
 use crate::core::key_manager::{contract_key, CacheBehavior, CacheManager};
 use crate::rest_api::common::{failure, success, CacheResult};
@@ -40,12 +36,7 @@ use utoipa::ToSchema;
 
 #[tonic::async_trait]
 trait ToTx {
-    async fn to(
-        &self,
-        account: &Account,
-        controller: ControllerClient,
-        evm: EvmClient,
-    ) -> Result<CloudNormalTransaction>;
+    async fn to(&self, controller: ControllerClient) -> Result<CloudNormalTransaction>;
 }
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
 pub struct CreateContract {
@@ -55,6 +46,8 @@ pub struct CreateContract {
     pub data: String,
     #[schema(example = "0x0")]
     pub value: Option<String>,
+    #[schema(example = 300000)]
+    pub quota: Option<u64>,
     #[schema(example = 20)]
     pub block_count: Option<i64>,
 }
@@ -64,33 +57,20 @@ impl Default for CreateContract {
         Self {
             data: "0x608060405234801561001057600080fd5b5060f58061001f6000396000f3006080604052600436106053576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806306661abd1460585780634f2be91f146080578063d826f88f146094575b600080fd5b348015606357600080fd5b50606a60a8565b6040518082815260200191505060405180910390f35b348015608b57600080fd5b50609260ae565b005b348015609f57600080fd5b5060a660c0565b005b60005481565b60016000808282540192505081905550565b600080819055505600a165627a7a72305820faa1d1f51d7b5ca2b200e0f6cdef4f2d7e44ee686209e300beb1146f40d32dee0029".to_string(),
             value: Some("0x0".to_string()),
+            quota: Some(300000),
             block_count: Some(20),
         }
     }
 }
 #[tonic::async_trait]
 impl ToTx for CreateContract {
-    async fn to(
-        &self,
-        account: &Account,
-        controller: ControllerClient,
-        evm: EvmClient,
-    ) -> Result<CloudNormalTransaction> {
+    async fn to(&self, controller: ControllerClient) -> Result<CloudNormalTransaction> {
         let current = controller.get_block_number(false).await?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = Vec::new();
         let data = parse_data(self.data.clone().as_str())?;
-        let bytes_quota = evm
-            .estimate_quota(
-                Address::try_from_slice(account.address().as_slice())?,
-                Address::default(),
-                data.clone(),
-            )
-            .await?
-            .bytes_quota;
-        let quota = hex_without_0x(bytes_quota.as_slice());
-        let quota = u64::from_str_radix(quota.as_str(), 16)?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
+        let quota = self.quota.unwrap_or_default();
         let system_config = controller
             .get_system_config()
             .await
@@ -119,6 +99,8 @@ pub struct SendTx {
     pub data: Option<String>,
     #[schema(example = "0x0")]
     pub value: Option<String>,
+    #[schema(example = 300000)]
+    pub quota: Option<u64>,
     #[schema(example = 20)]
     pub block_count: Option<i64>,
 }
@@ -129,6 +111,7 @@ impl Default for SendTx {
             to: "0x524268b46968103ce8323353dab16ae857f09a6f".to_string(),
             data: Some("0x4f2be91f".to_string()),
             value: Some("0x0".to_string()),
+            quota: Some(300000),
             block_count: Some(20),
         }
     }
@@ -136,27 +119,13 @@ impl Default for SendTx {
 
 #[tonic::async_trait]
 impl ToTx for SendTx {
-    async fn to(
-        &self,
-        account: &Account,
-        controller: ControllerClient,
-        evm: EvmClient,
-    ) -> Result<CloudNormalTransaction> {
+    async fn to(&self, controller: ControllerClient) -> Result<CloudNormalTransaction> {
         let current = controller.get_block_number(false).await?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = parse_addr(self.to.clone().as_str())?.to_vec();
         let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
-        let bytes_quota = evm
-            .estimate_quota(
-                Address::try_from_slice(account.address().as_slice())?,
-                Address::try_from_slice(to.as_slice())?,
-                data.clone(),
-            )
-            .await?
-            .bytes_quota;
-        let quota = hex_without_0x(bytes_quota.as_slice());
-        let quota = u64::from_str_radix(quota.as_str(), 16)?;
+        let quota = self.quota.unwrap_or_default();
         let system_config = controller
             .get_system_config()
             .await
@@ -205,16 +174,13 @@ fn get_account(account: &str, crypto: CryptoClient) -> Result<Account> {
 }
 
 async fn create_contract(
-    address: &str,
+    account: &str,
     crypto: CryptoClient,
-    evm: EvmClient,
     controller: ControllerClient,
     create_contract: CreateContract,
 ) -> Result<Hash> {
-    let account = get_account(address, crypto)?;
-    let tx = create_contract
-        .to(&account, controller.clone(), evm.clone())
-        .await?;
+    let account = get_account(account, crypto)?;
+    let tx = create_contract.to(controller.clone()).await?;
     controller.send_raw_tx(&account, tx).await
 }
 
@@ -233,7 +199,6 @@ pub async fn create(
     match create_contract(
         config.account.as_str(),
         ctx.crypto.clone(),
-        ctx.evm.clone(),
         ctx.controller.clone(),
         result.0,
     )
@@ -247,14 +212,11 @@ pub async fn create(
 async fn create_tx(
     account: &str,
     crypto: CryptoClient,
-    evm: EvmClient,
     controller: ControllerClient,
     send_tx: SendTx,
 ) -> Result<Hash> {
     let account = get_account(account, crypto)?;
-    let tx = send_tx
-        .to(&account, controller.clone(), evm.clone())
-        .await?;
+    let tx = send_tx.to(controller.clone()).await?;
     controller.send_raw_tx(&account, tx).await
 }
 
@@ -273,7 +235,6 @@ pub async fn send_tx(
     match create_tx(
         config.account.as_str(),
         ctx.crypto.clone(),
-        ctx.evm.clone(),
         ctx.controller.clone(),
         result.0,
     )
