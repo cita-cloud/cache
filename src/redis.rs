@@ -33,7 +33,7 @@ pub fn pool(redis_addr: String) -> Pool {
 pub type Pool = r2d2::Pool<RedisConnectionManager>;
 
 pub fn con() -> PooledConnection<RedisConnectionManager> {
-    REDIS_POOL.get().unwrap().try_get().unwrap()
+    REDIS_POOL.get().unwrap().get().unwrap()
 }
 
 pub fn get(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
