@@ -409,7 +409,7 @@ spec:
         - command:
             - /bin/sh
             - "-c"
-            - "ROCKET_CONFIG=/etc/cita-cloud/config/Cache.toml ROCKET_PROFILE=test ROCKET_WORKERS=8 ROCKET_ACCOUNT=757ca1c731a3d7e9bdbd0e22ee65918674a77bd7 cache"
+            - "ROCKET_CONFIG=/etc/cita-cloud/config/Cache.toml ROCKET_PROFILE=test ROCKET_WORKERS=16 ROCKET_ACCOUNT=757ca1c731a3d7e9bdbd0e22ee65918674a77bd7 cache"
           name: cache
           image: "docker.io/citacloud/cache:latest"
           imagePullPolicy: Always
