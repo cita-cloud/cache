@@ -24,7 +24,10 @@ use cita_cloud_proto::client::{EVMClientTrait, InterceptedSvc};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
     common::{Address as CloudAddress, Hash as CloudHash},
-    evm::{rpc_service_client::RpcServiceClient, Balance, ByteAbi, ByteCode, Nonce, Receipt},
+    evm::{
+        rpc_service_client::RpcServiceClient, Balance, ByteAbi, ByteCode, ByteQuota, Nonce, Receipt,
+    },
+    executor::CallRequest,
 };
 use tokio::sync::OnceCell;
 
@@ -63,6 +66,7 @@ pub trait EvmBehaviour {
     async fn get_balance(&self, addr: Address) -> Result<Balance>;
     async fn get_tx_count(&self, addr: Address) -> Result<Nonce>;
     async fn get_abi(&self, addr: Address) -> Result<ByteAbi>;
+    async fn estimate_quota(&self, from: Address, to: Address, data: Vec<u8>) -> Result<ByteQuota>;
 }
 
 #[tonic::async_trait]
@@ -120,6 +124,24 @@ impl EvmBehaviour for EvmClient {
             address: addr.to_vec(),
         };
         client.get_abi(addr).await.context("failed to get abi")
+    }
+
+    async fn estimate_quota(&self, from: Address, to: Address, data: Vec<u8>) -> Result<ByteQuota> {
+        let client = self.retry_client.get().unwrap();
+        let req = CallRequest {
+            from: from.to_vec(),
+            to: to.to_vec(),
+            // This is `executor_evm` specific calling convention.
+            // `executor_chaincode` uses args[0] for payload.
+            // But since no one uses chaincode, we may just use the evm's convention.
+            method: data,
+            args: Vec::new(),
+            height: 0,
+        };
+        client
+            .estimate_quota(req)
+            .await
+            .context("failed to estimate quota")
     }
 }
 
