@@ -16,6 +16,7 @@ use crate::cita_cloud::controller::ControllerBehaviour;
 use crate::cita_cloud::crypto::CryptoBehaviour;
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
+use crate::common::constant::REDIS_POOL;
 use crate::pool;
 use crate::redis::Pool;
 use cita_cloud_proto::client::ClientOptions;
@@ -39,6 +40,7 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
         executor_addr: String,
         crypto_addr: String,
         redis_addr: String,
+        workers: u64,
     ) -> Self
     where
         Co: ControllerBehaviour + Clone,
@@ -77,7 +79,10 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
             }
         }));
 
-        let redis_pool = pool(redis_addr);
+        let redis_pool = pool(redis_addr, workers as u32);
+        if let Err(e) = REDIS_POOL.set(redis_pool.clone()) {
+            error!("set redis pool fail: {:?}", e)
+        };
         let controller = Co::connect(controller_client);
         let executor = Ex::connect(executor_client);
         let evm = Ev::connect(evm_client);

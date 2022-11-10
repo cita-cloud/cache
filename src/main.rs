@@ -166,6 +166,7 @@ async fn set_param(
         config.executor_addr.unwrap_or_default(),
         config.crypto_addr.unwrap_or_default(),
         config.redis_addr.unwrap_or_default(),
+        config.workers,
     );
     if let Err(e) = CONTROLLER_CLIENT.set(ctx.controller.clone()) {
         panic!("store controller client error: {:?}", e);
