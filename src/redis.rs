@@ -24,8 +24,8 @@ use std::hash::Hash;
 pub fn pool(redis_addr: String, workers: u32) -> Pool {
     let manager = RedisConnectionManager::new(redis_addr).expect("connection manager");
     Pool::builder()
-        .max_size(workers * 2)
-        .min_idle(Some(workers / 2))
+        .max_size(workers * 3)
+        .min_idle(Some(workers / 3))
         .build(manager)
         .expect("db pool")
 }
