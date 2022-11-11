@@ -96,6 +96,10 @@ pub fn key(key_type: String, param: String) -> String {
     format!("{}:{}:{}", val_prefix(), key_type, param)
 }
 
+pub fn key_without_param(key_type: String) -> String {
+    format!("{}:{}", val_prefix(), key_type)
+}
+
 fn contract_pattern(to: String) -> String {
     format!("{}:{}:{}*", val_prefix(), CONTRACT_KEY, to)
 }
