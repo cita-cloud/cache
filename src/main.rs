@@ -53,7 +53,8 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::core::schedule_task::{
-    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, ScheduleTask,
+    BlockNumberTask, CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask,
+    ScheduleTask,
 };
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
@@ -228,6 +229,11 @@ async fn main() {
     ));
     tokio::spawn(LazyEvictExpiredKeyTask::schedule(
         timing_internal_sec * 2,
+        timing_batch,
+        expire_time,
+    ));
+    tokio::spawn(BlockNumberTask::schedule(
+        timing_internal_sec,
         timing_batch,
         expire_time,
     ));

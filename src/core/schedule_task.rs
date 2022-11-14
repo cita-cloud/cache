@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::core::key_manager::{CacheBehavior, CacheManager};
+use crate::cita_cloud::controller::ControllerBehaviour;
+use crate::common::constant::controller;
+use crate::core::key_manager::{key_without_param, CacheBehavior, CacheManager};
 use anyhow::Result;
 use tokio::time;
+
 #[tonic::async_trait]
 pub trait ScheduleTask {
     async fn task(timing_batch: isize, expire_time: usize) -> Result<()>;
@@ -77,6 +80,29 @@ pub struct EvictExpiredKeyTask;
 impl ScheduleTask for EvictExpiredKeyTask {
     async fn task(_: isize, _: usize) -> Result<()> {
         CacheManager::sub_evict_event().await
+    }
+
+    fn name() -> String {
+        "evict expired key".to_string()
+    }
+}
+use crate::common::display::Display;
+pub struct BlockNumberTask;
+
+#[tonic::async_trait]
+impl ScheduleTask for BlockNumberTask {
+    async fn task(_: isize, expire_time: usize) -> Result<()> {
+        CacheManager::set_ex(
+            key_without_param("block-number".to_string()),
+            controller().get_block_number(false).await?,
+            expire_time * 2,
+        )?;
+        CacheManager::set_ex(
+            key_without_param("system-config".to_string()),
+            controller().get_system_config().await?.display(),
+            expire_time * 2,
+        )?;
+        Ok(())
     }
 
     fn name() -> String {
