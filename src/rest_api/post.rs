@@ -15,12 +15,12 @@
 use anyhow::Context as Ctx;
 use std::{u64, usize};
 
-use crate::cita_cloud::account::Account;
 use crate::cita_cloud::controller::{
     ControllerBehaviour, SignerBehaviour, TransactionSenderBehaviour,
 };
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
+use crate::cita_cloud::wallet::{MaybeLocked, MultiCryptoAccount};
 use crate::common::crypto::Address;
 use crate::common::display::Display;
 use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
@@ -39,10 +39,10 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 #[tonic::async_trait]
-trait ToTx {
+trait ToTx<S: SignerBehaviour + Send + Sync> {
     async fn to(
         &self,
-        account: &Account,
+        account: &S,
         controller: ControllerClient,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction>;
@@ -69,10 +69,10 @@ impl Default for CreateContract {
     }
 }
 #[tonic::async_trait]
-impl ToTx for CreateContract {
+impl<S: SignerBehaviour + Send + Sync> ToTx<S> for CreateContract {
     async fn to(
         &self,
-        account: &Account,
+        account: &S,
         controller: ControllerClient,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
@@ -82,7 +82,7 @@ impl ToTx for CreateContract {
         let data = parse_data(self.data.clone().as_str())?;
         let bytes_quota = evm
             .estimate_quota(
-                Address::try_from_slice(account.address().as_slice())?,
+                Address::try_from_slice(account.address())?,
                 Address::default(),
                 data.clone(),
             )
@@ -135,10 +135,10 @@ impl Default for SendTx {
 }
 
 #[tonic::async_trait]
-impl ToTx for SendTx {
+impl<S: SignerBehaviour + Send + Sync> ToTx<S> for SendTx {
     async fn to(
         &self,
-        _account: &Account,
+        _account: &S,
         _controller: ControllerClient,
         _evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
@@ -189,23 +189,18 @@ impl Default for Call {
     }
 }
 
-fn get_account(account: &str, crypto: CryptoClient) -> Result<Account> {
-    let address = parse_addr(account)?;
-    Ok(Account::new(crypto, address))
-}
-
 async fn create_contract(
-    address: &str,
-    crypto: CryptoClient,
     evm: EvmClient,
     controller: ControllerClient,
     create_contract: CreateContract,
 ) -> Result<Hash> {
-    let account = get_account(address, crypto)?;
+    let account_str = get(key_without_param("admin-account".to_string()))?;
+    let maybe: MaybeLocked = toml::from_str::<MaybeLocked>(&account_str)?;
+    let account: &MultiCryptoAccount = maybe.unlocked()?;
     let tx = create_contract
-        .to(&account, controller.clone(), evm.clone())
+        .to(account, controller.clone(), evm.clone())
         .await?;
-    controller.send_raw_tx(&account, tx).await
+    controller.send_raw_tx(account, tx).await
 }
 
 ///Create contract
@@ -218,34 +213,20 @@ request_body = CreateContract,
 pub async fn create(
     result: Json<CreateContract>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-    config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
-    match create_contract(
-        config.account.as_str(),
-        ctx.crypto.clone(),
-        ctx.evm.clone(),
-        ctx.controller.clone(),
-        result.0,
-    )
-    .await
-    {
+    match create_contract(ctx.evm.clone(), ctx.controller.clone(), result.0).await {
         Ok(data) => Json(success(data.to_json())),
         Err(e) => Json(failure(e)),
     }
 }
 
-async fn create_tx(
-    account: &str,
-    crypto: CryptoClient,
-    evm: EvmClient,
-    controller: ControllerClient,
-    send_tx: SendTx,
-) -> Result<Hash> {
-    let account = get_account(account, crypto)?;
-    let tx = send_tx
-        .to(&account, controller.clone(), evm.clone())
-        .await?;
-    controller.send_raw_tx(&account, tx).await
+async fn create_tx(evm: EvmClient, controller: ControllerClient, send_tx: SendTx) -> Result<Hash> {
+    let account_str = get(key_without_param("admin-account".to_string()))?;
+    let maybe: MaybeLocked = toml::from_str(&account_str)?;
+    let account: &MultiCryptoAccount = maybe.unlocked()?;
+    let tx = send_tx.to(account, controller.clone(), evm.clone()).await?;
+
+    controller.send_raw_tx(account, tx).await
 }
 
 ///Send Transaction
@@ -258,17 +239,8 @@ request_body = SendTx,
 pub async fn send_tx(
     result: Json<SendTx>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-    config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
-    match create_tx(
-        config.account.as_str(),
-        ctx.crypto.clone(),
-        ctx.evm.clone(),
-        ctx.controller.clone(),
-        result.0,
-    )
-    .await
-    {
+    match create_tx(ctx.evm.clone(), ctx.controller.clone(), result.0).await {
         Ok(data) => Json(success(data.to_json())),
         Err(e) => Json(failure(e)),
     }

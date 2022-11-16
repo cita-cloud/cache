@@ -18,11 +18,9 @@ use anyhow::Result;
 
 use prost::Message;
 
-use crate::cita_cloud::crypto::CryptoBehaviour;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::util::hex_without_0x;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
-use crate::CryptoClient;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -218,15 +216,9 @@ impl ControllerBehaviour for ControllerClient {
 
 #[tonic::async_trait]
 pub trait SignerBehaviour {
-    async fn hash(&self, msg: Vec<u8>) -> Vec<u8> {
-        self.client().hash_data(msg).await
-    }
-    fn address(&self) -> Vec<u8>;
-    async fn sign(&self, msg: Vec<u8>) -> Vec<u8> {
-        self.client().sign_message(msg).await
-    }
-
-    fn client(&self) -> CryptoClient;
+    fn hash(&self, msg: &[u8]) -> Vec<u8>;
+    fn address(&self) -> &[u8];
+    fn sign(&self, msg: &[u8]) -> Vec<u8>;
 
     async fn sign_raw_tx(&self, tx: CloudNormalTransaction) -> RawTransaction {
         // calc tx hash
@@ -237,12 +229,12 @@ pub trait SignerBehaviour {
                 tx.encode(&mut buf).unwrap();
                 buf
             };
-            self.hash(tx_bytes).await
+            self.hash(tx_bytes.as_slice())
         };
 
         // sign tx hash
-        let sender = self.address();
-        let signature = self.sign(tx_hash.clone()).await.to_vec();
+        let sender = self.address().to_vec();
+        let signature = self.sign(tx_hash.as_slice()).to_vec();
 
         // build raw tx
         let raw_tx = {
@@ -273,12 +265,12 @@ pub trait SignerBehaviour {
                 utxo.encode(&mut buf).unwrap();
                 buf
             };
-            self.hash(utxo_bytes).await
+            self.hash(utxo_bytes.as_slice())
         };
 
         // sign utxo hash
         let sender = self.address().to_vec();
-        let signature = self.sign(utxo_hash.clone()).await.to_vec();
+        let signature = self.sign(utxo_hash.as_slice()).to_vec();
 
         // build raw utxo
         let raw_utxo = {

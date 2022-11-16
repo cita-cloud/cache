@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod account;
 pub mod controller;
 pub mod crypto;
 pub mod evm;
 pub mod executor;
+pub mod wallet;

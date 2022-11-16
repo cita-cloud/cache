@@ -13,8 +13,12 @@
 // limitations under the License.
 
 use crate::cita_cloud::controller::ControllerBehaviour;
+use crate::cita_cloud::wallet::{Account, MaybeLocked, MultiCryptoAccount};
 use crate::common::constant::controller;
-use crate::core::key_manager::{key_without_param, CacheBehavior, CacheManager};
+use crate::common::crypto::SmCrypto;
+use crate::core::key_manager::{
+    key_without_param, CacheBehavior, CacheManager, ExpiredBehavior, ValBehavior,
+};
 use anyhow::Result;
 use tokio::time;
 
@@ -87,6 +91,8 @@ impl ScheduleTask for EvictExpiredKeyTask {
     }
 }
 use crate::common::display::Display;
+use crate::redis::set_ex;
+
 pub struct BlockNumberTask;
 
 #[tonic::async_trait]
@@ -102,6 +108,17 @@ impl ScheduleTask for BlockNumberTask {
             controller().get_system_config().await?.display(),
             expire_time * 2,
         )?;
+        let key = key_without_param("admin-account".to_string());
+        if CacheManager::exist_val(key.clone())? {
+            CacheManager::update_expire(key, expire_time * 2)?;
+        } else {
+            let account: MultiCryptoAccount = Account::<SmCrypto>::generate().into();
+            let maybe_locked: MaybeLocked = account.into();
+            let result = toml::to_string_pretty(&maybe_locked)?;
+            CacheManager::create_expire(key.clone(), expire_time * 2)?;
+            set_ex(key, result, expire_time * 2)?;
+        }
+
         Ok(())
     }
 
