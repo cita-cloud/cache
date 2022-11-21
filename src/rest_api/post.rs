@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::Context as Ctx;
 use std::{u64, usize};
 
-use crate::cita_cloud::controller::{
-    ControllerBehaviour, SignerBehaviour, TransactionSenderBehaviour,
-};
+use crate::cita_cloud::controller::{SignerBehaviour, TransactionSenderBehaviour};
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::{MaybeLocked, MultiCryptoAccount};
@@ -73,10 +70,10 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for CreateContract {
     async fn to(
         &self,
         account: &S,
-        controller: ControllerClient,
+        _controller: ControllerClient,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
-        let current = controller.get_block_number(false).await?;
+        let current = get(key_without_param("block-number".to_string()))?.parse::<u64>()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = Vec::new();
         let data = parse_data(self.data.clone().as_str())?;
@@ -91,12 +88,10 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for CreateContract {
         let quota = hex_without_0x(bytes_quota.as_slice());
         let quota = u64::from_str_radix(quota.as_str(), 16)?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
-        let system_config = controller
-            .get_system_config()
-            .await
-            .context("failed to get system config")?;
-        let version = system_config.version;
-        let chain_id = system_config.chain_id;
+        let system_config: Value =
+            serde_json::from_str(get(key_without_param("system-config".to_string()))?.as_str())?;
+        let version = system_config.get("version").unwrap().as_u64().unwrap() as u32;
+        let chain_id = parse_data(system_config.get("chain_id").unwrap().as_str().unwrap())?;
         let nonce = rand::random::<u64>().to_string();
         Ok(CloudNormalTransaction {
             version,
@@ -138,17 +133,26 @@ impl Default for SendTx {
 impl<S: SignerBehaviour + Send + Sync> ToTx<S> for SendTx {
     async fn to(
         &self,
-        _account: &S,
+        account: &S,
         _controller: ControllerClient,
-        _evm: EvmClient,
+        evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
         let current = get(key_without_param("block-number".to_string()))?.parse::<u64>()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
-        let to = parse_addr(self.to.clone().as_str())?.to_vec();
+        let to = parse_addr(self.to.clone().as_str())?;
         let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
 
-        let quota = 300000;
+        let bytes_quota = evm
+            .estimate_quota(
+                Address::try_from_slice(account.address())?,
+                to,
+                data.clone(),
+            )
+            .await?
+            .bytes_quota;
+        let quota = hex_without_0x(bytes_quota.as_slice());
+        let quota = u64::from_str_radix(quota.as_str(), 16)?;
         let system_config: Value =
             serde_json::from_str(get(key_without_param("system-config".to_string()))?.as_str())?;
         let version = system_config.get("version").unwrap().as_u64().unwrap() as u32;
@@ -156,7 +160,7 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for SendTx {
         let nonce = rand::random::<u64>().to_string();
         Ok(CloudNormalTransaction {
             version,
-            to,
+            to: to.to_vec(),
             data,
             value,
             nonce,
