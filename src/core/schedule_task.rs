@@ -14,8 +14,8 @@
 
 use crate::cita_cloud::controller::ControllerBehaviour;
 use crate::cita_cloud::wallet::{Account, MaybeLocked, MultiCryptoAccount};
-use crate::common::constant::controller;
-use crate::common::crypto::SmCrypto;
+use crate::common::constant::{controller, ADMIN_ACCOUNT, BLOCK_NUMBER, SYSTEM_CONFIG};
+use crate::common::crypto::Crypto;
 use crate::core::key_manager::{
     key_without_param, CacheBehavior, CacheManager, ExpiredBehavior, ValBehavior,
 };
@@ -93,26 +93,32 @@ impl ScheduleTask for EvictExpiredKeyTask {
 use crate::common::display::Display;
 use crate::redis::set_ex;
 
-pub struct BlockNumberTask;
+pub struct UsefulParamTask<C: Crypto> {
+    #[allow(dead_code)]
+    public_key: C::PublicKey,
+}
 
 #[tonic::async_trait]
-impl ScheduleTask for BlockNumberTask {
+impl<C: Crypto> ScheduleTask for UsefulParamTask<C>
+where
+    MultiCryptoAccount: From<Account<C>>,
+{
     async fn task(_: isize, expire_time: usize) -> Result<()> {
         CacheManager::set_ex(
-            key_without_param("block-number".to_string()),
+            key_without_param(BLOCK_NUMBER.to_string()),
             controller().get_block_number(false).await?,
             expire_time * 2,
         )?;
         CacheManager::set_ex(
-            key_without_param("system-config".to_string()),
+            key_without_param(SYSTEM_CONFIG.to_string()),
             controller().get_system_config().await?.display(),
             expire_time * 2,
         )?;
-        let key = key_without_param("admin-account".to_string());
+        let key = key_without_param(ADMIN_ACCOUNT.to_string());
         if CacheManager::exist_val(key.clone())? {
             CacheManager::update_expire(key, expire_time * 2)?;
         } else {
-            let account: MultiCryptoAccount = Account::<SmCrypto>::generate().into();
+            let account: MultiCryptoAccount = Account::<C>::generate().into();
             let maybe_locked: MaybeLocked = account.into();
             let result = toml::to_string_pretty(&maybe_locked)?;
             CacheManager::create_expire(key.clone(), expire_time * 2)?;

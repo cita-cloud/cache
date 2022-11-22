@@ -12,6 +12,7 @@ account = "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7"
 log_level = "critical"
 expire_time = 60
 rough_internal = 10
+crypto_type = "SM"
 
 ## set only when compiled in debug mode, i.e, `cargo build`
 [debug]

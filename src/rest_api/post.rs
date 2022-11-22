@@ -18,6 +18,7 @@ use crate::cita_cloud::controller::{SignerBehaviour, TransactionSenderBehaviour}
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::{MaybeLocked, MultiCryptoAccount};
+use crate::common::constant::{ADMIN_ACCOUNT, BLOCK_NUMBER, SYSTEM_CONFIG};
 use crate::common::crypto::Address;
 use crate::common::display::Display;
 use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
@@ -73,7 +74,7 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for CreateContract {
         _controller: ControllerClient,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
-        let current = get(key_without_param("block-number".to_string()))?.parse::<u64>()?;
+        let current = get(key_without_param(BLOCK_NUMBER.to_string()))?.parse::<u64>()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = Vec::new();
         let data = parse_data(self.data.clone().as_str())?;
@@ -89,7 +90,7 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for CreateContract {
         let quota = u64::from_str_radix(quota.as_str(), 16)?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
         let system_config: Value =
-            serde_json::from_str(get(key_without_param("system-config".to_string()))?.as_str())?;
+            serde_json::from_str(get(key_without_param(SYSTEM_CONFIG.to_string()))?.as_str())?;
         let version = system_config.get("version").unwrap().as_u64().unwrap() as u32;
         let chain_id = parse_data(system_config.get("chain_id").unwrap().as_str().unwrap())?;
         let nonce = rand::random::<u64>().to_string();
@@ -137,7 +138,7 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for SendTx {
         _controller: ControllerClient,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
-        let current = get(key_without_param("block-number".to_string()))?.parse::<u64>()?;
+        let current = get(key_without_param(BLOCK_NUMBER.to_string()))?.parse::<u64>()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = parse_addr(self.to.clone().as_str())?;
         let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
@@ -154,7 +155,7 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for SendTx {
         let quota = hex_without_0x(bytes_quota.as_slice());
         let quota = u64::from_str_radix(quota.as_str(), 16)?;
         let system_config: Value =
-            serde_json::from_str(get(key_without_param("system-config".to_string()))?.as_str())?;
+            serde_json::from_str(get(key_without_param(SYSTEM_CONFIG.to_string()))?.as_str())?;
         let version = system_config.get("version").unwrap().as_u64().unwrap() as u32;
         let chain_id = parse_data(system_config.get("chain_id").unwrap().as_str().unwrap())?;
         let nonce = rand::random::<u64>().to_string();
@@ -198,7 +199,7 @@ async fn create_contract(
     controller: ControllerClient,
     create_contract: CreateContract,
 ) -> Result<Hash> {
-    let account_str = get(key_without_param("admin-account".to_string()))?;
+    let account_str = get(key_without_param(ADMIN_ACCOUNT.to_string()))?;
     let maybe: MaybeLocked = toml::from_str::<MaybeLocked>(&account_str)?;
     let account: &MultiCryptoAccount = maybe.unlocked()?;
     let tx = create_contract
@@ -225,7 +226,7 @@ pub async fn create(
 }
 
 async fn create_tx(evm: EvmClient, controller: ControllerClient, send_tx: SendTx) -> Result<Hash> {
-    let account_str = get(key_without_param("admin-account".to_string()))?;
+    let account_str = get(key_without_param(ADMIN_ACCOUNT.to_string()))?;
     let maybe: MaybeLocked = toml::from_str(&account_str)?;
     let account: &MultiCryptoAccount = maybe.unlocked()?;
     let tx = send_tx.to(account, controller.clone(), evm.clone()).await?;
