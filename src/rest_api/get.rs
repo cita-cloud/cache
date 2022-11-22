@@ -209,29 +209,29 @@ pub async fn tx(
     }
 }
 
-///Get peers count
-#[get("/get-peers-count")]
-#[utoipa::path(get, path = "/api/get-peers-count")]
-pub async fn peers_count(
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-) -> Json<CacheResult<Value>> {
-    match ctx.controller.get_peer_count().await {
-        Ok(peer_count) => Json(success(json!(peer_count))),
-        Err(e) => Json(failure(e)),
-    }
-}
+// ///Get peers count
+// #[get("/get-peers-count")]
+// #[utoipa::path(get, path = "/api/get-peers-count")]
+// pub async fn peers_count(
+//     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+// ) -> Json<CacheResult<Value>> {
+//     match ctx.controller.get_peer_count().await {
+//         Ok(peer_count) => Json(success(json!(peer_count))),
+//         Err(e) => Json(failure(e)),
+//     }
+// }
 
-///Get peers info
-#[get("/get-peers-info")]
-#[utoipa::path(get, path = "/api/get-peers-info")]
-pub async fn peers_info(
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-) -> Json<CacheResult<Value>> {
-    match ctx.controller.get_peers_info().await {
-        Ok(peers_info) => Json(success(peers_info.to_json())),
-        Err(e) => Json(failure(e)),
-    }
-}
+// ///Get peers info
+// #[get("/get-peers-info")]
+// #[utoipa::path(get, path = "/api/get-peers-info")]
+// pub async fn peers_info(
+//     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+// ) -> Json<CacheResult<Value>> {
+//     match ctx.controller.get_peers_info().await {
+//         Ok(peers_info) => Json(success(peers_info.to_json())),
+//         Err(e) => Json(failure(e)),
+//     }
+// }
 
 ///Get nonce by account address
 #[get("/get-account-nonce/<address>")]
@@ -297,17 +297,17 @@ pub async fn receipt(
     }
 }
 
-///Get chain version
-#[get("/get-version")]
-#[utoipa::path(get, path = "/api/get-version")]
-pub async fn version(
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-) -> Json<CacheResult<Value>> {
-    match ctx.controller.get_version().await {
-        Ok(version) => Json(success(json!(version))),
-        Err(e) => Json(failure(e)),
-    }
-}
+// ///Get chain version
+// #[get("/get-version")]
+// #[utoipa::path(get, path = "/api/get-version")]
+// pub async fn version(
+//     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+// ) -> Json<CacheResult<Value>> {
+//     match ctx.controller.get_version().await {
+//         Ok(version) => Json(success(json!(version))),
+//         Err(e) => Json(failure(e)),
+//     }
+// }
 
 ///Get system config
 #[get("/get-system-config")]

@@ -29,7 +29,7 @@ use cita_cloud_proto::{
         Transaction as CloudNormalTransaction, UnverifiedTransaction, UnverifiedUtxoTransaction,
         UtxoTransaction as CloudUtxoTransaction, Witness,
     },
-    common::{Empty, Hash as CloudHash, NodeNetInfo, TotalNodeInfo},
+    common::{Empty, Hash as CloudHash, NodeNetInfo, NodeStatus},
     controller::rpc_service_client::RpcServiceClient,
     controller::{BlockNumber, Flag, SystemConfig},
 };
@@ -44,7 +44,6 @@ pub trait ControllerBehaviour {
 
     async fn send_raw(&self, raw: RawTransaction) -> Result<Hash>;
 
-    async fn get_version(&self) -> Result<String>;
     async fn get_system_config(&self) -> Result<SystemConfig>;
 
     async fn get_block_number(&self, for_pending: bool) -> Result<u64>;
@@ -60,10 +59,9 @@ pub trait ControllerBehaviour {
     async fn get_tx_index(&self, tx_hash: Hash) -> Result<u64>;
     async fn get_tx_block_number(&self, tx_hash: Hash) -> Result<u64>;
 
-    async fn get_peer_count(&self) -> Result<u64>;
-    async fn get_peers_info(&self) -> Result<TotalNodeInfo>;
-
     async fn add_node(&self, multiaddr: String) -> Result<u32>;
+
+    async fn get_node_status(&self) -> Result<NodeStatus>;
 }
 
 #[tonic::async_trait]
@@ -78,14 +76,6 @@ impl ControllerBehaviour for ControllerClient {
 
         Hash::try_from_slice(&resp.hash)
             .context("controller returns an invalid transaction hash, maybe we are using a wrong signing algorithm?")
-    }
-
-    async fn get_version(&self) -> Result<String> {
-        let client = self.retry_client.get().unwrap();
-
-        let version = client.get_version(Empty {}).await?.version;
-
-        Ok(version)
     }
 
     async fn get_system_config(&self) -> Result<SystemConfig> {
@@ -185,22 +175,6 @@ impl ControllerBehaviour for ControllerClient {
         Ok(resp.block_number)
     }
 
-    async fn get_peer_count(&self) -> Result<u64> {
-        let client = self.retry_client.get().unwrap();
-
-        let resp = client.get_peer_count(Empty {}).await?;
-
-        Ok(resp.peer_count)
-    }
-
-    async fn get_peers_info(&self) -> Result<TotalNodeInfo> {
-        let client = self.retry_client.get().unwrap();
-
-        let resp = client.get_peers_info(Empty {}).await?;
-
-        Ok(resp)
-    }
-
     async fn add_node(&self, multiaddr: String) -> Result<u32> {
         let client = self.retry_client.get().unwrap();
 
@@ -211,6 +185,14 @@ impl ControllerBehaviour for ControllerClient {
         let resp = client.add_node(node_info).await?;
 
         Ok(resp.code)
+    }
+
+    async fn get_node_status(&self) -> Result<NodeStatus> {
+        let client = self.retry_client.get().unwrap();
+
+        let resp = client.get_node_status(Empty {}).await?;
+
+        Ok(resp)
     }
 }
 

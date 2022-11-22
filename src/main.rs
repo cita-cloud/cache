@@ -39,8 +39,7 @@ use anyhow::Result;
 use log::{set_logger, set_max_level};
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
-    abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
-    receipt, system_config, tx, version,
+    abi, account_nonce, balance, block, block_hash, block_number, code, receipt, system_config, tx,
 };
 use rest_api::post::{call, create, send_tx};
 use rocket::config::LogLevel;
@@ -79,13 +78,10 @@ fn rocket(figment: Figment) -> Rocket<Build> {
                 block,
                 code,
                 tx,
-                peers_count,
-                peers_info,
                 account_nonce,
                 receipt,
                 system_config,
                 block_hash,
-                version,
                 call,
                 create,
                 send_tx,

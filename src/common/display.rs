@@ -19,16 +19,14 @@ use cita_cloud_proto::{
         raw_transaction::Tx, Block, CompactBlock, RawTransaction, Transaction,
         UnverifiedTransaction, UnverifiedUtxoTransaction, UtxoTransaction, Witness,
     },
-    common::{NodeInfo, TotalNodeInfo},
+    common::{NodeHeight, NodeNetInfo, NodeStatus, TotalNodeNetInfo},
     controller::SystemConfig,
     evm::{Balance, ByteAbi, ByteCode, Log, Nonce, Receipt},
     executor::CallResponse,
 };
 
 use serde_json::json;
-use serde_json::map::Map;
 use serde_json::Value as Json;
-use tentacle_multiaddr::{Multiaddr, Protocol};
 pub trait Display {
     fn to_json(&self) -> Json;
     fn display(&self) -> String {
@@ -265,45 +263,6 @@ impl Display for (RawTransaction, u64, u64) {
     }
 }
 
-impl Display for NodeInfo {
-    fn to_json(&self) -> Json {
-        let mut info_pair = Map::new();
-        info_pair.insert(
-            String::from("address"),
-            Json::from(hex::encode(&self.address)),
-        );
-        if let Some(net_info) = self.net_info.as_ref() {
-            info_pair.insert(String::from("origin"), Json::from(net_info.origin));
-            let multi_address: Multiaddr = net_info.multi_address[..].parse().unwrap();
-            for ptcl in multi_address.iter() {
-                match ptcl {
-                    Protocol::Dns4(host) => {
-                        info_pair.insert(String::from("host"), Json::from(host));
-                    }
-                    Protocol::Ip4(host) => {
-                        info_pair.insert(String::from("host"), Json::from(host.to_string()));
-                    }
-                    Protocol::Tcp(port) => {
-                        info_pair.insert(String::from("port"), Json::from(port));
-                    }
-                    Protocol::Tls(domain) => {
-                        info_pair.insert(String::from("domain"), Json::from(domain));
-                    }
-                    _ => panic!("multi address({:?}) can't parse", net_info.multi_address),
-                };
-            }
-        }
-        Json::from(info_pair)
-    }
-}
-
-impl Display for TotalNodeInfo {
-    fn to_json(&self) -> Json {
-        let nodes: Vec<Json> = self.nodes.iter().map(Display::to_json).collect();
-        json!({ "nodes": nodes })
-    }
-}
-
 impl Display for Log {
     fn to_json(&self) -> Json {
         json!({
@@ -316,6 +275,44 @@ impl Display for Log {
             "tx_index": self.transaction_index,
             "log_index": self.log_index,
             "tx_log_index": self.transaction_log_index,
+        })
+    }
+}
+impl Display for NodeHeight {
+    fn to_json(&self) -> Json {
+        json!({
+            "height": self.height,
+            "address": hex(&self.address),
+        })
+    }
+}
+
+impl Display for NodeNetInfo {
+    fn to_json(&self) -> Json {
+        json!({
+            "multi_address": self.multi_address,
+            "origin": self.origin,
+        })
+    }
+}
+
+impl Display for TotalNodeNetInfo {
+    fn to_json(&self) -> Json {
+        json!({
+            "nodes": json!(self.nodes.iter().map(|t| t.to_json()).collect::<Vec<_>>()),
+        })
+    }
+}
+
+impl Display for NodeStatus {
+    fn to_json(&self) -> Json {
+        json!({
+            "is_sync": self.is_sync,
+            "version": self.version,
+            "self_status": self.self_status.as_ref().map(|s| s.to_json()).unwrap_or_else(|| json!({})),
+            "peer_status": json!(self.peer_status.iter().map(|t| t.to_json()).collect::<Vec<_>>()),
+            "connected_peer_count": self.connected_peer_count,
+            "connected_peers_info": self.connected_peers_info.as_ref().map(|c| c.to_json()).unwrap_or_else(|| json!({})),
         })
     }
 }
