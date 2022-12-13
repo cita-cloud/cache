@@ -27,7 +27,7 @@ use crate::common::cache_log::LOGGER;
 use crate::common::constant::{
     CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
 };
-use crate::common::crypto::{ArrayLike, Hash};
+use crate::common::crypto::{ArrayLike, EthCrypto, Hash, SmCrypto};
 use crate::common::display::Display;
 use crate::core::context::Context;
 use crate::redis::{
@@ -39,8 +39,7 @@ use anyhow::Result;
 use log::{set_logger, set_max_level};
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
-    abi, account_nonce, balance, block, block_hash, block_number, code, peers_count, peers_info,
-    receipt, system_config, tx, version,
+    abi, account_nonce, balance, block, block_hash, block_number, code, receipt, system_config, tx,
 };
 use rest_api::post::{call, create, send_tx};
 use rocket::config::LogLevel;
@@ -50,10 +49,12 @@ use serde::Deserialize;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::cita_cloud::wallet::CryptoType;
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::core::schedule_task::{
     CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, ScheduleTask,
+    UsefulParamTask,
 };
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
@@ -78,13 +79,10 @@ fn rocket(figment: Figment) -> Rocket<Build> {
                 block,
                 code,
                 tx,
-                peers_count,
-                peers_info,
                 account_nonce,
                 receipt,
                 system_config,
                 block_hash,
-                version,
                 call,
                 create,
                 send_tx,
@@ -110,6 +108,7 @@ pub struct CacheConfig {
     //collect expired keys in rough_internal seconds
     rough_internal: Option<u64>,
     workers: u64,
+    crypto_type: CryptoType,
 }
 
 impl Default for CacheConfig {
@@ -126,6 +125,7 @@ impl Default for CacheConfig {
             expire_time: Some(60),
             rough_internal: Some(10),
             workers: 1,
+            crypto_type: CryptoType::Sm,
         }
     }
 }
@@ -143,6 +143,7 @@ impl Display for CacheConfig {
             "expire_time": self.expire_time,
             "rough_internal": self.rough_internal,
             "workers": self.workers,
+            "crypto_type": self.crypto_type,
         })
     }
 }
@@ -231,6 +232,24 @@ async fn main() {
         timing_batch,
         expire_time,
     ));
+    tokio::spawn(UsefulParamTask::<SmCrypto>::schedule(
+        timing_internal_sec,
+        timing_batch,
+        expire_time,
+    ));
+    match config.crypto_type {
+        CryptoType::Sm => tokio::spawn(UsefulParamTask::<SmCrypto>::schedule(
+            timing_internal_sec,
+            timing_batch,
+            expire_time,
+        )),
+        CryptoType::Eth => tokio::spawn(UsefulParamTask::<EthCrypto>::schedule(
+            timing_internal_sec,
+            timing_batch,
+            expire_time,
+        )),
+    };
+
     let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<CacheConfig>());
 
     if let Err(e) = rocket.manage(ctx).launch().await {

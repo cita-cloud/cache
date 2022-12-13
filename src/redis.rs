@@ -32,7 +32,7 @@ pub fn pool(redis_addr: String, workers: u32) -> Pool {
 
 pub type Pool = r2d2::Pool<RedisConnectionManager>;
 
-pub fn con() -> PooledConnection<RedisConnectionManager> {
+fn con() -> PooledConnection<RedisConnectionManager> {
     REDIS_POOL.get().unwrap().get().unwrap()
 }
 

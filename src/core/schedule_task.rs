@@ -12,9 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::core::key_manager::{CacheBehavior, CacheManager};
+use crate::cita_cloud::controller::ControllerBehaviour;
+use crate::cita_cloud::wallet::{Account, MaybeLocked, MultiCryptoAccount};
+use crate::common::constant::{controller, ADMIN_ACCOUNT, BLOCK_NUMBER, SYSTEM_CONFIG};
+use crate::common::crypto::Crypto;
+use crate::core::key_manager::{
+    key_without_param, CacheBehavior, CacheManager, ExpiredBehavior, ValBehavior,
+};
 use anyhow::Result;
 use tokio::time;
+
 #[tonic::async_trait]
 pub trait ScheduleTask {
     async fn task(timing_batch: isize, expire_time: usize) -> Result<()>;
@@ -77,6 +84,48 @@ pub struct EvictExpiredKeyTask;
 impl ScheduleTask for EvictExpiredKeyTask {
     async fn task(_: isize, _: usize) -> Result<()> {
         CacheManager::sub_evict_event().await
+    }
+
+    fn name() -> String {
+        "evict expired key".to_string()
+    }
+}
+use crate::common::display::Display;
+use crate::redis::set_ex;
+
+pub struct UsefulParamTask<C: Crypto> {
+    #[allow(dead_code)]
+    public_key: C::PublicKey,
+}
+
+#[tonic::async_trait]
+impl<C: Crypto> ScheduleTask for UsefulParamTask<C>
+where
+    MultiCryptoAccount: From<Account<C>>,
+{
+    async fn task(_: isize, expire_time: usize) -> Result<()> {
+        CacheManager::set_ex(
+            key_without_param(BLOCK_NUMBER.to_string()),
+            controller().get_block_number(false).await?,
+            expire_time * 2,
+        )?;
+        CacheManager::set_ex(
+            key_without_param(SYSTEM_CONFIG.to_string()),
+            controller().get_system_config().await?.display(),
+            expire_time * 2,
+        )?;
+        let key = key_without_param(ADMIN_ACCOUNT.to_string());
+        if CacheManager::exist_val(key.clone())? {
+            CacheManager::update_expire(key, expire_time * 2)?;
+        } else {
+            let account: MultiCryptoAccount = Account::<C>::generate().into();
+            let maybe_locked: MaybeLocked = account.into();
+            let result = toml::to_string_pretty(&maybe_locked)?;
+            CacheManager::create_expire(key.clone(), expire_time * 2)?;
+            set_ex(key, result, expire_time * 2)?;
+        }
+
+        Ok(())
     }
 
     fn name() -> String {

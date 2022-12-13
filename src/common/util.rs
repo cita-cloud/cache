@@ -84,7 +84,6 @@ pub fn parse_u64(s: &str) -> Result<u64, ParseIntError> {
     s.parse::<u64>()
 }
 
-#[allow(dead_code)]
 pub fn hex(data: &[u8]) -> String {
     format!("0x{}", hex::encode(data))
 }

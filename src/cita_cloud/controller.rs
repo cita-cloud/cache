@@ -18,11 +18,9 @@ use anyhow::Result;
 
 use prost::Message;
 
-use crate::cita_cloud::crypto::CryptoBehaviour;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::util::hex_without_0x;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
-use crate::CryptoClient;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -31,7 +29,7 @@ use cita_cloud_proto::{
         Transaction as CloudNormalTransaction, UnverifiedTransaction, UnverifiedUtxoTransaction,
         UtxoTransaction as CloudUtxoTransaction, Witness,
     },
-    common::{Empty, Hash as CloudHash, NodeNetInfo, TotalNodeInfo},
+    common::{Empty, Hash as CloudHash, NodeNetInfo, NodeStatus},
     controller::rpc_service_client::RpcServiceClient,
     controller::{BlockNumber, Flag, SystemConfig},
 };
@@ -46,7 +44,6 @@ pub trait ControllerBehaviour {
 
     async fn send_raw(&self, raw: RawTransaction) -> Result<Hash>;
 
-    async fn get_version(&self) -> Result<String>;
     async fn get_system_config(&self) -> Result<SystemConfig>;
 
     async fn get_block_number(&self, for_pending: bool) -> Result<u64>;
@@ -62,10 +59,9 @@ pub trait ControllerBehaviour {
     async fn get_tx_index(&self, tx_hash: Hash) -> Result<u64>;
     async fn get_tx_block_number(&self, tx_hash: Hash) -> Result<u64>;
 
-    async fn get_peer_count(&self) -> Result<u64>;
-    async fn get_peers_info(&self) -> Result<TotalNodeInfo>;
-
     async fn add_node(&self, multiaddr: String) -> Result<u32>;
+
+    async fn get_node_status(&self) -> Result<NodeStatus>;
 }
 
 #[tonic::async_trait]
@@ -80,14 +76,6 @@ impl ControllerBehaviour for ControllerClient {
 
         Hash::try_from_slice(&resp.hash)
             .context("controller returns an invalid transaction hash, maybe we are using a wrong signing algorithm?")
-    }
-
-    async fn get_version(&self) -> Result<String> {
-        let client = self.retry_client.get().unwrap();
-
-        let version = client.get_version(Empty {}).await?.version;
-
-        Ok(version)
     }
 
     async fn get_system_config(&self) -> Result<SystemConfig> {
@@ -187,22 +175,6 @@ impl ControllerBehaviour for ControllerClient {
         Ok(resp.block_number)
     }
 
-    async fn get_peer_count(&self) -> Result<u64> {
-        let client = self.retry_client.get().unwrap();
-
-        let resp = client.get_peer_count(Empty {}).await?;
-
-        Ok(resp.peer_count)
-    }
-
-    async fn get_peers_info(&self) -> Result<TotalNodeInfo> {
-        let client = self.retry_client.get().unwrap();
-
-        let resp = client.get_peers_info(Empty {}).await?;
-
-        Ok(resp)
-    }
-
     async fn add_node(&self, multiaddr: String) -> Result<u32> {
         let client = self.retry_client.get().unwrap();
 
@@ -214,19 +186,21 @@ impl ControllerBehaviour for ControllerClient {
 
         Ok(resp.code)
     }
+
+    async fn get_node_status(&self) -> Result<NodeStatus> {
+        let client = self.retry_client.get().unwrap();
+
+        let resp = client.get_node_status(Empty {}).await?;
+
+        Ok(resp)
+    }
 }
 
 #[tonic::async_trait]
 pub trait SignerBehaviour {
-    async fn hash(&self, msg: Vec<u8>) -> Vec<u8> {
-        self.client().hash_data(msg).await
-    }
-    fn address(&self) -> Vec<u8>;
-    async fn sign(&self, msg: Vec<u8>) -> Vec<u8> {
-        self.client().sign_message(msg).await
-    }
-
-    fn client(&self) -> CryptoClient;
+    fn hash(&self, msg: &[u8]) -> Vec<u8>;
+    fn address(&self) -> &[u8];
+    fn sign(&self, msg: &[u8]) -> Vec<u8>;
 
     async fn sign_raw_tx(&self, tx: CloudNormalTransaction) -> RawTransaction {
         // calc tx hash
@@ -237,12 +211,12 @@ pub trait SignerBehaviour {
                 tx.encode(&mut buf).unwrap();
                 buf
             };
-            self.hash(tx_bytes).await
+            self.hash(tx_bytes.as_slice())
         };
 
         // sign tx hash
-        let sender = self.address();
-        let signature = self.sign(tx_hash.clone()).await.to_vec();
+        let sender = self.address().to_vec();
+        let signature = self.sign(tx_hash.as_slice()).to_vec();
 
         // build raw tx
         let raw_tx = {
@@ -273,12 +247,12 @@ pub trait SignerBehaviour {
                 utxo.encode(&mut buf).unwrap();
                 buf
             };
-            self.hash(utxo_bytes).await
+            self.hash(utxo_bytes.as_slice())
         };
 
         // sign utxo hash
         let sender = self.address().to_vec();
-        let signature = self.sign(utxo_hash.clone()).await.to_vec();
+        let signature = self.sign(utxo_hash.as_slice()).to_vec();
 
         // build raw utxo
         let raw_utxo = {
