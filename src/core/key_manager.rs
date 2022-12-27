@@ -25,7 +25,7 @@ use crate::{
     delete, exists, get, hdel, hget, hset, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::RawTransaction;
 use prost::Message;
@@ -346,7 +346,7 @@ impl CacheBehavior for CacheManager {
             if let Ok(json) = serde_json::from_str(result.as_str()) {
                 Ok(json)
             } else {
-                Ok(Value::String(result))
+                Err(anyhow!(result))
             }
         } else {
             let val: T = f.await?;
