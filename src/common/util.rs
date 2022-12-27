@@ -75,7 +75,7 @@ pub fn parse_value(s: &str) -> Result<[u8; 32]> {
     }
     // padding 0 to 32 bytes
     let padded = format!("{:0>64}", s);
-    hex::decode(&padded)
+    hex::decode(padded)
         .map(|v| v.try_into().unwrap())
         .map_err(|e| anyhow!("invalid value: {e}"))
 }
@@ -109,6 +109,6 @@ pub fn timestamp() -> u64 {
     let since_the_epoch = start
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards");
-    since_the_epoch.as_secs() as u64 * 1000u64
+    since_the_epoch.as_secs() * 1000u64
         + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as u64
 }

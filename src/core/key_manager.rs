@@ -78,7 +78,7 @@ fn current_clean_up_key() -> String {
 
 fn current_rough_time() -> u64 {
     let current = timestamp();
-    current - current % rough_internal() as u64
+    current - current % rough_internal()
 }
 
 pub fn contract_key(to: String, data: String, height: u64) -> String {
