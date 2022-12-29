@@ -209,21 +209,26 @@ impl ExpiredBehavior for CacheManager {
         expire_time - expire_time % rough_internal + rough_internal
     }
 
+    //CacheManager::set_up()会清理掉过期的key，若被清理create_expire
     fn update_expire(key: String, seconds: usize) -> Result<()> {
-        let old_expire_time = hget(lazy_evict_to_time(), key.clone())?;
-        let rough_internal = rough_internal();
-        let old_rough_time = Self::rough_time(old_expire_time, rough_internal);
+        if hexists(lazy_evict_to_time(), key.clone())? {
+            let old_expire_time = hget(lazy_evict_to_time(), key.clone())?;
+            let rough_internal = rough_internal();
+            let old_rough_time = Self::rough_time(old_expire_time, rough_internal);
 
-        let (expire_time, rough_time) = Self::time_pair(timestamp(), seconds, rough_internal);
+            let (expire_time, rough_time) = Self::time_pair(timestamp(), seconds, rough_internal);
 
-        smove(
-            clean_up_key(old_rough_time),
-            clean_up_key(rough_time),
-            key.clone(),
-        )?;
-        hset(lazy_evict_to_time(), key.clone(), expire_time)?;
-        hset(evict_to_rough_time(), key, clean_up_key(rough_time))?;
-        Ok(())
+            smove(
+                clean_up_key(old_rough_time),
+                clean_up_key(rough_time),
+                key.clone(),
+            )?;
+            hset(lazy_evict_to_time(), key.clone(), expire_time)?;
+            hset(evict_to_rough_time(), key, clean_up_key(rough_time))?;
+            Ok(())
+        } else {
+            Self::create_expire(key, seconds)
+        }
     }
 
     fn delete_expire(key: String, member: String) -> Result<()> {
