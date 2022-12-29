@@ -25,7 +25,7 @@ use crate::{
     delete, exists, get, hdel, hget, hset, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::RawTransaction;
 use prost::Message;
@@ -78,7 +78,7 @@ fn current_clean_up_key() -> String {
 
 fn current_rough_time() -> u64 {
     let current = timestamp();
-    current - current % rough_internal() as u64
+    current - current % rough_internal()
 }
 
 pub fn contract_key(to: String, data: String, height: u64) -> String {
@@ -346,7 +346,7 @@ impl CacheBehavior for CacheManager {
             if let Ok(json) = serde_json::from_str(result.as_str()) {
                 Ok(json)
             } else {
-                Ok(Value::String(result))
+                Err(anyhow!(result))
             }
         } else {
             let val: T = f.await?;
