@@ -16,12 +16,14 @@ extern crate rocket;
 
 use crate::cita_cloud::controller::ControllerBehaviour;
 use crate::cita_cloud::evm::EvmBehaviour;
+use crate::common::constant::BLOCK_NUMBER;
 use crate::common::display::Display;
 use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
 use crate::core::context::Context;
-use crate::core::key_manager::{key, CacheBehavior, CacheManager};
+use crate::core::key_manager::{key, key_without_param, CacheBehavior, CacheManager};
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{get, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use anyhow::anyhow;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde_json::{json, Value};
@@ -30,11 +32,14 @@ use serde_json::{json, Value};
 #[get("/get-block-number")]
 #[utoipa::path(get, path = "/api/get-block-number")]
 pub async fn block_number(
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    _ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    match ctx.controller.get_block_number(false).await {
-        Ok(block_number) => Json(success(json!(block_number))),
-        Err(e) => Json(failure(e)),
+    match get(key_without_param(BLOCK_NUMBER.to_string())) {
+        Ok(bn_str) => match bn_str.parse::<u64>() {
+            Ok(bn) => Json(success(json!(bn))),
+            Err(e) => Json(failure(anyhow!(e))),
+        },
+        Err(e) => Json(failure(anyhow!(e))),
     }
 }
 
