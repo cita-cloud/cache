@@ -14,10 +14,10 @@
 
 use crate::cita_cloud::{controller::ControllerBehaviour, evm::EvmBehaviour};
 use crate::common::constant::{
-    controller, evm, rough_internal, COMMITTED_TX, CONTRACT_KEY, EVICT_TO_ROUGH_TIME,
+    controller, evm, rough_internal, BLOCK_NUMBER, COMMITTED_TX, CONTRACT_KEY, EVICT_TO_ROUGH_TIME,
     EXPIRED_KEY_EVENT_AT_ALL_DB, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE, KEY_PREFIX,
-    LAZY_EVICT_TO_TIME, ONE_THOUSAND, SET_TYPE, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VAL_TYPE,
-    ZSET_TYPE,
+    LAZY_EVICT_TO_TIME, ONE_THOUSAND, SET_TYPE, SYSTEM_CONFIG, TIME_TO_CLEAN_UP, UNCOMMITTED_TX,
+    VAL_TYPE, ZSET_TYPE,
 };
 use crate::common::util::{hex_without_0x, parse_data, timestamp};
 use crate::redis::{hexists, sadd, smove, ttl};
@@ -520,6 +520,13 @@ impl CacheBehavior for CacheManager {
     }
 
     async fn set_up() -> Result<()> {
+        for item in [BLOCK_NUMBER.to_string(), SYSTEM_CONFIG.to_string()] {
+            let member = key_without_param(item);
+            delete(member.clone())?;
+            if Self::clean_up_expired_by_key(member.clone()).is_ok() {
+                info!("set up -> reset key: {} success", member);
+            }
+        }
         let current = current_rough_time();
         for key in keys::<String>(clean_up_pattern())? {
             let rough_time_str: &str = &key[clean_up_prefix().len()..];

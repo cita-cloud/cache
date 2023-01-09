@@ -18,6 +18,7 @@ use crate::common::constant::{controller, ADMIN_ACCOUNT, BLOCK_NUMBER, SYSTEM_CO
 use crate::common::crypto::Crypto;
 use crate::core::key_manager::{key_without_param, CacheBehavior, CacheManager};
 use anyhow::Result;
+use std::cmp;
 use tokio::time;
 
 #[tonic::async_trait]
@@ -89,6 +90,7 @@ impl ScheduleTask for EvictExpiredKeyTask {
     }
 }
 use crate::common::display::Display;
+use crate::{exists, get};
 
 pub struct UsefulParamTask<C: Crypto> {
     #[allow(dead_code)]
@@ -101,9 +103,17 @@ where
     MultiCryptoAccount: From<Account<C>>,
 {
     async fn task(_: isize, expire_time: usize) -> Result<()> {
+        let key = key_without_param(BLOCK_NUMBER.to_string());
         CacheManager::set_ex(
-            key_without_param(BLOCK_NUMBER.to_string()),
-            controller().get_block_number(false).await?,
+            key.clone(),
+            cmp::max(
+                controller().get_block_number(false).await?,
+                if exists(key.clone())? {
+                    get(key)?.parse::<u64>()?
+                } else {
+                    0
+                },
+            ),
             expire_time * 2,
         )?;
         CacheManager::set_ex(
