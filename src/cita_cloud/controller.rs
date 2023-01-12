@@ -213,7 +213,6 @@ pub trait SignerBehaviour {
             };
             self.hash(tx_bytes.as_slice())
         };
-
         // sign tx hash
         let sender = self.address().to_vec();
         let signature = self.sign(tx_hash.as_slice()).to_vec();
@@ -287,25 +286,31 @@ pub trait SignerBehaviour {
 
 #[tonic::async_trait]
 pub trait TransactionSenderBehaviour {
-    async fn send_raw_tx<S>(&self, signer: &S, raw_tx: CloudNormalTransaction) -> Result<Hash>
+    async fn send_raw_tx<S>(
+        &self,
+        signer: &S,
+        raw_tx: CloudNormalTransaction,
+        need_package: bool,
+    ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync;
     async fn send_raw_utxo<S>(&self, signer: &S, raw_utxo: CloudUtxoTransaction) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync;
 
-    async fn send_tx<S>(
-        &self,
-        signer: &S,
-        // Use Vec<u8> instead of Address to allow empty address for creating contract
-        to: Vec<u8>,
-        data: Vec<u8>,
-        value: Vec<u8>,
-        quota: u64,
-        valid_until_block: u64,
-    ) -> Result<Hash>
-    where
-        S: SignerBehaviour + Send + Sync;
+    // async fn send_tx<S>(
+    //     &self,
+    //     signer: &S,
+    //     // Use Vec<u8> instead of Address to allow empty address for creating contract
+    //     to: Vec<u8>,
+    //     data: Vec<u8>,
+    //     value: Vec<u8>,
+    //     quota: u64,
+    //     valid_until_block: u64,
+    //     need_package: bool,
+    // ) -> Result<Hash>
+    // where
+    //     S: SignerBehaviour + Send + Sync;
     // async fn send_utxo<S>(&self, signer: &S, output: Vec<u8>, utxo_type: UtxoType) -> Result<Hash>
     // where
     //     S: SignerBehaviour + Send + Sync;
@@ -316,7 +321,12 @@ impl<T> TransactionSenderBehaviour for T
 where
     T: ControllerBehaviour + Send + Sync,
 {
-    async fn send_raw_tx<S>(&self, signer: &S, raw_tx: CloudNormalTransaction) -> Result<Hash>
+    async fn send_raw_tx<S>(
+        &self,
+        signer: &S,
+        raw_tx: CloudNormalTransaction,
+        need_package: bool,
+    ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync,
     {
@@ -331,11 +341,7 @@ where
         };
         raw.encode(&mut buf)?;
 
-        CacheManager::enqueue(
-            hex_without_0x(hash),
-            hex_without_0x(&buf[..]),
-            valid_until_block,
-        )?;
+        CacheManager::enqueue(hex_without_0x(hash), buf, valid_until_block, need_package)?;
 
         Ok(Hash::try_from_slice(hash)?)
     }
@@ -348,36 +354,37 @@ where
         self.send_raw(raw).await.context("failed to send raw")
     }
 
-    async fn send_tx<S>(
-        &self,
-        signer: &S,
-        to: Vec<u8>,
-        data: Vec<u8>,
-        value: Vec<u8>,
-        quota: u64,
-        valid_until_block: u64,
-    ) -> Result<Hash>
-    where
-        S: SignerBehaviour + Send + Sync,
-    {
-        let system_config = self
-            .get_system_config()
-            .await
-            .context("failed to get system config")?;
-
-        let raw_tx = CloudNormalTransaction {
-            version: system_config.version,
-            to,
-            data,
-            value,
-            nonce: rand::random::<u64>().to_string(),
-            quota,
-            valid_until_block,
-            chain_id: system_config.chain_id.clone(),
-        };
-
-        self.send_raw_tx(signer, raw_tx).await
-    }
+    // async fn send_tx<S>(
+    //     &self,
+    //     signer: &S,
+    //     to: Vec<u8>,
+    //     data: Vec<u8>,
+    //     value: Vec<u8>,
+    //     quota: u64,
+    //     valid_until_block: u64,
+    //     need_package: bool,
+    // ) -> Result<Hash>
+    // where
+    //     S: SignerBehaviour + Send + Sync,
+    // {
+    //     let system_config = self
+    //         .get_system_config()
+    //         .await
+    //         .context("failed to get system config")?;
+    //
+    //     let raw_tx = CloudNormalTransaction {
+    //         version: system_config.version,
+    //         to,
+    //         data,
+    //         value,
+    //         nonce: rand::random::<u64>().to_string(),
+    //         quota,
+    //         valid_until_block,
+    //         chain_id: system_config.chain_id.clone(),
+    //     };
+    //
+    //     self.send_raw_tx(signer, raw_tx, need_package).await
+    // }
 
     // async fn send_utxo<S>(&self, signer: &S, output: Vec<u8>, utxo_type: UtxoType) -> Result<Hash>
     // where

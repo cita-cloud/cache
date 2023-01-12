@@ -29,7 +29,9 @@ pub struct Context<Co, Ex, Ev, Cr> {
     /// Those gRPC client are connected lazily.
     pub controller: Co,
     pub executor: Ex,
+    pub local_executor: Ex,
     pub evm: Ev,
+    pub local_evm: Ev,
     pub crypto: Cr,
     pub redis_pool: Pool,
 }
@@ -38,6 +40,7 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
     pub fn new(
         controller_addr: String,
         executor_addr: String,
+        local_executor_addr: String,
         crypto_addr: String,
         redis_addr: String,
         workers: u64,
@@ -62,9 +65,25 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
                 Err(e) => panic!("client init error: {:?}", &e),
             }
         }));
+        let local_executor_client = OnceCell::new_with(Some({
+            let client_options =
+                ClientOptions::new(CLIENT_NAME.to_string(), local_executor_addr.clone());
+            match client_options.connect_executor() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
+        }));
 
         let evm_client = OnceCell::new_with(Some({
             let client_options = ClientOptions::new(CLIENT_NAME.to_string(), executor_addr);
+            match client_options.connect_evm() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
+        }));
+
+        let local_evm_client = OnceCell::new_with(Some({
+            let client_options = ClientOptions::new(CLIENT_NAME.to_string(), local_executor_addr);
             match client_options.connect_evm() {
                 Ok(retry_client) => retry_client,
                 Err(e) => panic!("client init error: {:?}", &e),
@@ -85,12 +104,16 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
         };
         let controller = Co::connect(controller_client);
         let executor = Ex::connect(executor_client);
+        let local_executor = Ex::connect(local_executor_client);
         let evm = Ev::connect(evm_client);
+        let local_evm = Ev::connect(local_evm_client);
         let crypto = Cr::connect(crypto_client);
         Self {
             controller,
             executor,
+            local_executor,
             evm,
+            local_evm,
             crypto,
             redis_pool,
         }

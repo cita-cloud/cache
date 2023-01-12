@@ -16,8 +16,9 @@ use crate::cita_cloud::controller::ControllerBehaviour;
 use crate::cita_cloud::wallet::{Account, MaybeLocked, MultiCryptoAccount};
 use crate::common::constant::{controller, ADMIN_ACCOUNT, BLOCK_NUMBER, SYSTEM_CONFIG};
 use crate::common::crypto::Crypto;
-use crate::core::key_manager::{key_without_param, CacheBehavior, CacheManager};
+use crate::core::key_manager::{key_without_param, CacheBehavior, CacheManager, PackBehavior};
 use anyhow::Result;
+use prost::Message;
 use tokio::time;
 
 #[tonic::async_trait]
@@ -43,6 +44,19 @@ pub struct CommitTxTask;
 impl ScheduleTask for CommitTxTask {
     async fn task(timing_batch: isize, expire_time: usize) -> Result<()> {
         CacheManager::commit(timing_batch, expire_time).await
+    }
+
+    fn name() -> String {
+        "commit tx".to_string()
+    }
+}
+
+pub struct PackTxTask;
+
+#[tonic::async_trait]
+impl ScheduleTask for PackTxTask {
+    async fn task(timing_batch: isize, expire_time: usize) -> Result<()> {
+        CacheManager::package(timing_batch, expire_time).await
     }
 
     fn name() -> String {
@@ -88,7 +102,6 @@ impl ScheduleTask for EvictExpiredKeyTask {
         "evict expired key".to_string()
     }
 }
-use crate::common::display::Display;
 
 pub struct UsefulParamTask<C: Crypto> {
     #[allow(dead_code)]
@@ -106,9 +119,14 @@ where
             controller().get_block_number(false).await?,
             expire_time * 2,
         )?;
+        let sys_config = controller().get_system_config().await?;
+        let mut sys_config_bytes = Vec::with_capacity(sys_config.encoded_len());
+        sys_config
+            .encode(&mut sys_config_bytes)
+            .expect("encode system config failed");
         CacheManager::set_ex(
             key_without_param(SYSTEM_CONFIG.to_string()),
-            controller().get_system_config().await?.display(),
+            sys_config_bytes,
             expire_time * 2,
         )?;
         let account: MultiCryptoAccount = Account::<C>::generate().into();

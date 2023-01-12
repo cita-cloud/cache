@@ -36,8 +36,18 @@ fn con() -> PooledConnection<RedisConnectionManager> {
     REDIS_POOL.get().unwrap().get().unwrap()
 }
 
-pub fn get(key: String) -> Result<String, r2d2_redis::redis::RedisError> {
+pub fn get<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    key: String,
+) -> Result<T, r2d2_redis::redis::RedisError> {
     con().get(key)
+}
+
+pub fn get_num(key: String) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con().get(key)
+}
+
+pub fn incr(key: String) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con().incr::<String, u64, u64>(key, 1)
 }
 
 pub fn ttl(key: String) -> Result<isize, r2d2_redis::redis::RedisError> {
@@ -84,7 +94,7 @@ pub fn hset<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     con().hset::<String, String, T, u64>(hkey, key, val)
 }
 
-pub fn hget<T: Clone + Default + ToRedisArgs + Display + FromRedisValue>(
+pub fn hget<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     hkey: String,
     key: String,
 ) -> Result<T, r2d2_redis::redis::RedisError> {

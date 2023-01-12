@@ -16,6 +16,8 @@ use anyhow::{Context, Result};
 use cita_cloud_proto::client::{ExecutorClientTrait, InterceptedSvc};
 
 use crate::common::crypto::{Address, ArrayLike};
+use cita_cloud_proto::blockchain::Block;
+use cita_cloud_proto::common::HashResponse;
 use cita_cloud_proto::executor::{
     executor_service_client::ExecutorServiceClient, CallRequest, CallResponse,
 };
@@ -37,6 +39,8 @@ pub trait ExecutorBehaviour {
         data: Vec<u8>,
         height: u64,
     ) -> Result<CallResponse>;
+
+    async fn exec(&self, block: Block) -> Result<HashResponse>;
 }
 
 #[tonic::async_trait]
@@ -65,6 +69,14 @@ impl ExecutorBehaviour for ExecutorClient {
         };
         client
             .call(req)
+            .await
+            .context("failed to do executor gRPC call")
+    }
+
+    async fn exec(&self, block: Block) -> Result<HashResponse> {
+        let client = self.retry_client.get().unwrap();
+        client
+            .exec(block)
             .await
             .context("failed to do executor gRPC call")
     }

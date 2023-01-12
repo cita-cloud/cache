@@ -14,20 +14,33 @@
 
 use crate::cita_cloud::{controller::ControllerBehaviour, evm::EvmBehaviour};
 use crate::common::constant::{
-    controller, evm, rough_internal, COMMITTED_TX, CONTRACT_KEY, EVICT_TO_ROUGH_TIME,
-    EXPIRED_KEY_EVENT_AT_ALL_DB, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE, KEY_PREFIX,
-    LAZY_EVICT_TO_TIME, ONE_THOUSAND, SET_TYPE, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VAL_TYPE,
-    ZSET_TYPE,
+    controller, evm, local_executor, rough_internal, COMMITTED_TX, CONTRACT_KEY,
+    EVICT_TO_ROUGH_TIME, EXPIRED_KEY_EVENT_AT_ALL_DB, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE,
+    KEY_PREFIX, LAZY_EVICT_TO_TIME, ONE_THOUSAND, PACK_UNCOMMITTED_TX, SET_TYPE, TIME_TO_CLEAN_UP,
+    UNCOMMITTED_TX, VAL_TYPE, ZSET_TYPE,
 };
-use crate::common::util::{hex_without_0x, parse_data, timestamp};
+use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, timestamp};
 use crate::redis::{hexists, sadd, smove, ttl};
 use crate::{
     delete, exists, get, hdel, hget, hset, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
 };
 use anyhow::{anyhow, Result};
-use cita_cloud_proto::blockchain::raw_transaction::Tx;
-use cita_cloud_proto::blockchain::RawTransaction;
+use cita_cloud_proto::blockchain::{
+    raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions,
+    Transaction as CloudNormalTransaction,
+};
+
+use crate::cita_cloud::controller::{SignerBehaviour, TransactionSenderBehaviour};
+use crate::cita_cloud::evm::constant::STORE_ADDRESS;
+use crate::cita_cloud::executor::ExecutorBehaviour;
+use crate::cita_cloud::wallet::MaybeLocked;
+use crate::common::context::{BlockContext, LocalBehaviour};
+use crate::common::crypto::Address;
+use crate::common::package::Package;
+use crate::common::util::hex;
+use cloud_util::unix_now;
+use msgpack_schema::serialize;
 use prost::Message;
 use r2d2_redis::redis::{ControlFlow, FromRedisValue, ToRedisArgs};
 use serde_json::Value;
@@ -35,6 +48,9 @@ use std::future::Future;
 
 fn uncommitted_tx_key() -> String {
     format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, UNCOMMITTED_TX)
+}
+fn pack_uncommitted_tx_key() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, PACK_UNCOMMITTED_TX)
 }
 
 fn committed_tx_key() -> String {
@@ -135,17 +151,18 @@ pub trait ValBehavior {
 
 #[tonic::async_trait]
 pub trait TxBehavior {
-    fn enqueue_tx(hash_str: String, tx_str: String) -> Result<()>;
-
+    fn enqueue_tx(hash_str: String, tx: Vec<u8>, need_package: bool) -> Result<()>;
     fn commit_tx(tx_hash: String, score: u64) -> Result<()>;
 
-    fn original_tx(tx_hash: String) -> Result<String>;
+    fn original_tx(tx_hash: String) -> Result<Vec<u8>>;
 
     fn valid_until_block(tx_hash: String) -> Result<u64>;
 
     fn save_valid_until_block(tx_hash: String, valid_until_block: u64) -> Result<u64>;
 
     fn uncommitted_txs(size: isize) -> Result<Vec<(String, u64)>>;
+
+    fn pack_uncommitted_txs(size: isize) -> Result<Vec<(String, u64)>>;
 
     fn committed_txs(size: isize) -> Result<Vec<(String, u64)>>;
 
@@ -158,8 +175,18 @@ pub trait ContractBehavior {
 }
 
 #[tonic::async_trait]
-pub trait CacheBehavior: ExpiredBehavior + ValBehavior + ContractBehavior {
-    fn enqueue(hash_str: String, tx_str: String, valid_util_block: u64) -> Result<()>;
+pub trait PackBehavior {
+    async fn package(timing_batch: isize, expire_time: usize) -> Result<()>;
+}
+
+#[tonic::async_trait]
+pub trait CacheBehavior: ExpiredBehavior + ValBehavior + ContractBehavior + PackBehavior {
+    fn enqueue(
+        hash_str: String,
+        tx: Vec<u8>,
+        valid_util_block: u64,
+        need_package: bool,
+    ) -> Result<()>;
     async fn load_or_query<F, T>(key: String, expire_time: usize, f: F) -> Result<Value>
     where
         T: Display,
@@ -249,9 +276,14 @@ impl ExpiredBehavior for CacheManager {
 
 #[tonic::async_trait]
 impl TxBehavior for CacheManager {
-    fn enqueue_tx(hash_str: String, tx_str: String) -> Result<()> {
-        zadd(uncommitted_tx_key(), hash_str.clone(), timestamp())?;
-        hset(hash_to_tx(), hash_str, tx_str)?;
+    fn enqueue_tx(hash_str: String, tx: Vec<u8>, need_package: bool) -> Result<()> {
+        let key = if need_package {
+            pack_uncommitted_tx_key()
+        } else {
+            uncommitted_tx_key()
+        };
+        zadd(key, hash_str.clone(), timestamp())?;
+        hset(hash_to_tx(), hash_str, tx)?;
         Ok(())
     }
 
@@ -261,8 +293,8 @@ impl TxBehavior for CacheManager {
         Ok(())
     }
 
-    fn original_tx(tx_hash: String) -> Result<String> {
-        let tx = hget::<String>(hash_to_tx(), tx_hash)?;
+    fn original_tx(tx_hash: String) -> Result<Vec<u8>> {
+        let tx = hget::<Vec<u8>>(hash_to_tx(), tx_hash)?;
         Ok(tx)
     }
 
@@ -278,6 +310,11 @@ impl TxBehavior for CacheManager {
 
     fn uncommitted_txs(size: isize) -> Result<Vec<(String, u64)>> {
         let result = zrange_withscores::<String>(uncommitted_tx_key(), 0, size)?;
+        Ok(result)
+    }
+
+    fn pack_uncommitted_txs(size: isize) -> Result<Vec<(String, u64)>> {
+        let result = zrange_withscores::<String>(pack_uncommitted_tx_key(), 0, size)?;
         Ok(result)
     }
 
@@ -319,7 +356,7 @@ impl ValBehavior for CacheManager {
 impl ContractBehavior for CacheManager {
     fn try_clean_contract_data(tx_hash: String) -> Result<()> {
         let tx = Self::original_tx(tx_hash)?;
-        let decoded: RawTransaction = Message::decode(parse_data(tx.as_str())?.as_slice())?;
+        let decoded: RawTransaction = Message::decode(tx.as_slice())?;
         if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
             if let Some(transaction) = normal_tx.transaction {
                 let addr = hex_without_0x(&transaction.to);
@@ -335,10 +372,116 @@ impl ContractBehavior for CacheManager {
 }
 
 #[tonic::async_trait]
+impl PackBehavior for CacheManager {
+    async fn package(timing_batch: isize, expire_time: usize) -> Result<()> {
+        let members = CacheManager::pack_uncommitted_txs(timing_batch)?;
+        if members.is_empty() {
+            return Ok(());
+        }
+        let mut tx_list = Vec::new();
+        let mut hash_list = Vec::new();
+        for (tx_hash, _score) in members {
+            let tx = match Self::original_tx(tx_hash.clone()) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    Self::save_error(tx_hash.clone(), format!("{}", e), expire_time * 5)?;
+                    Self::clean_up_tx(tx_hash.clone())?;
+                    continue;
+                }
+            };
+            let decoded: RawTransaction = Message::decode(tx.as_slice())?;
+            tx_list.push(decoded);
+            hash_list.push(tx_hash);
+        }
+        let height = BlockContext::get_current_height().await?;
+        let maybe: MaybeLocked = BlockContext::current_account()?;
+        let account = maybe.unlocked()?;
+        let header = BlockHeader {
+            prevhash: BlockContext::get_current_block_hash().await?,
+            timestamp: unix_now(),
+            height,
+            transactions_root: vec![0u8; 32],
+            proposer: account.address().to_vec(),
+        };
+
+        let block = Block {
+            version: 0,
+            header: Some(header.clone()),
+            body: Some(RawTransactions { body: tx_list }),
+            proof: Vec::new(),
+            state_root: Vec::new(),
+        };
+        if let Ok(res) = local_executor().exec(block.clone()).await {
+            if let Some(status) = res.status {
+                if status.code == 0 {
+                    let mut block_bytes = Vec::new();
+                    block.encode(&mut block_bytes).expect("encode block failed");
+                    let package = Package {
+                        batch_number: height,
+                        block: block_bytes,
+                    };
+                    let current = BlockContext::current_height()?;
+                    let valid_until_block: u64 = (current as i64 + 20) as u64;
+                    let to = parse_addr(STORE_ADDRESS)?;
+                    let data = serialize(package);
+                    let value = parse_value("0x0")?.to_vec();
+
+                    let bytes_quota = evm()
+                        .estimate_quota(
+                            Address::try_from_slice(account.address())?,
+                            to,
+                            data.clone(),
+                        )
+                        .await?
+                        .bytes_quota;
+                    let quota = hex_without_0x(bytes_quota.as_slice());
+                    let quota = u64::from_str_radix(quota.as_str(), 16)?;
+                    let system_config = BlockContext::system_config()?;
+                    let version = system_config.version;
+                    let chain_id = system_config.chain_id;
+                    let nonce = rand::random::<u64>().to_string();
+                    let tx = CloudNormalTransaction {
+                        version,
+                        to: to.to_vec(),
+                        data,
+                        value,
+                        nonce,
+                        quota,
+                        valid_until_block,
+                        chain_id,
+                    };
+                    controller().send_raw_tx(account, tx, false).await?;
+
+                    for hash in hash_list {
+                        zrem(pack_uncommitted_tx_key(), hash.clone())?;
+                    }
+                    let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
+                    header
+                        .encode(&mut block_header_bytes)
+                        .expect("encode block header failed");
+                    let block_hash = account.hash(block_header_bytes.as_slice());
+                    let hash_str = hex(block_hash.as_slice());
+                    info!("local execute tx success, block hash: {}", hash_str);
+
+                    BlockContext::increase_block_height()?;
+                    BlockContext::set_current_block_hash(hash_str)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[tonic::async_trait]
 impl CacheBehavior for CacheManager {
-    fn enqueue(hash_str: String, tx_str: String, valid_util_block: u64) -> Result<()> {
+    fn enqueue(
+        hash_str: String,
+        tx: Vec<u8>,
+        valid_util_block: u64,
+        need_package: bool,
+    ) -> Result<()> {
         Self::save_valid_until_block(hash_str.clone(), valid_util_block)?;
-        Self::enqueue_tx(hash_str, tx_str)
+        Self::enqueue_tx(hash_str, tx, need_package)
     }
 
     async fn load_or_query<F, T>(key: String, expire_time: usize, f: F) -> Result<Value>
@@ -418,7 +561,7 @@ impl CacheBehavior for CacheManager {
                     continue;
                 }
             };
-            let decoded: RawTransaction = Message::decode(&parse_data(tx.as_str())?[..])?;
+            let decoded: RawTransaction = Message::decode(tx.as_slice())?;
             match controller().send_raw(decoded.clone()).await {
                 Ok(data) => {
                     Self::commit_tx(tx_hash.clone(), score)?;
@@ -486,7 +629,7 @@ impl CacheBehavior for CacheManager {
         let key = current_clean_up_key();
         if exists(key.clone())? {
             for member in smembers::<String>(key.clone())? {
-                if get(member.clone()).is_err() {
+                if get::<String>(member.clone()).is_err() {
                     info!("lazy evict key: {}", member);
                 }
                 Self::clean_up_expired(key.clone(), member.clone())?;

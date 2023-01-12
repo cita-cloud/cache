@@ -45,6 +45,8 @@ redis = "0.21.5"
 r2d2 = "*"
 r2d2_redis = "*"
 thiserror =  "1"
+msgpack-schema = "0.4.2"
+tokio-test = "0.4.2"
 
 [build-dependencies]
 tonic-build = "0.8"

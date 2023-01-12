@@ -288,6 +288,38 @@ pub async fn receipt(
     match CacheManager::load_or_query(
         key("receipt".to_string(), hash.to_string()),
         config.expire_time.unwrap_or_default() as usize,
+        ctx.local_evm.get_receipt(data),
+    )
+    .await
+    {
+        Ok(data) => Json(success(data)),
+        Err(e) => Json(failure(e)),
+    }
+}
+
+///Get inner tx receipt by hash
+#[get("/get-receipt-inner/<hash>")]
+#[utoipa::path(
+get,
+path = "/api/get-receipt-inner/{hash}",
+params(
+("hash", description = "The tx hash"),
+)
+)]
+pub async fn receipt_inner(
+    hash: &str,
+    config: &State<CacheConfig>,
+    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+) -> Json<CacheResult<Value>> {
+    info!("get-receipt inner hash {}", hash);
+    let hash = remove_0x(hash);
+    let data = match parse_hash(hash) {
+        Ok(hash) => hash,
+        Err(e) => return Json(failure(e)),
+    };
+    match CacheManager::load_or_query(
+        key("receipt-inner".to_string(), hash.to_string()),
+        config.expire_time.unwrap_or_default() as usize,
         ctx.evm.get_receipt(data),
     )
     .await

@@ -15,11 +15,8 @@
 use anyhow::Context as _;
 use anyhow::Result;
 
-use super::controller::{SignerBehaviour, TransactionSenderBehaviour};
-use crate::common::{
-    crypto::{Address, ArrayLike, Hash},
-    util::parse_addr,
-};
+// use super::controller::{SignerBehaviour, TransactionSenderBehaviour};
+use crate::common::crypto::{Address, ArrayLike, Hash};
 use cita_cloud_proto::client::{EVMClientTrait, InterceptedSvc};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -34,7 +31,7 @@ use tokio::sync::OnceCell;
 // TODO: use constant array for these constant to avoid runtime parsing.
 
 #[allow(unused)]
-mod constant {
+pub mod constant {
     /// Store action target address
     pub const STORE_ADDRESS: &str = "0xffffffffffffffffffffffffffffffffff010000";
     /// StoreAbi action target address
@@ -145,58 +142,62 @@ impl EvmBehaviour for EvmClient {
     }
 }
 
-#[tonic::async_trait]
-pub trait EvmBehaviourExt {
-    async fn store_contract_abi<S>(
-        &self,
-        signer: &S,
-        contract_addr: Address,
-        abi: &[u8],
-        quota: u64,
-        valid_until_block: u64,
-    ) -> Result<Hash>
-    where
-        S: SignerBehaviour + Send + Sync;
-}
-
-#[tonic::async_trait]
-impl<T> EvmBehaviourExt for T
-where
-    T: TransactionSenderBehaviour + Send + Sync,
-{
-    // The binary protocol is the implementation details of the current EVM service.
-    async fn store_contract_abi<S>(
-        &self,
-        signer: &S,
-        contract_addr: Address,
-        abi: &[u8],
-        quota: u64,
-        valid_until_block: u64,
-    ) -> Result<Hash>
-    where
-        S: SignerBehaviour + Send + Sync,
-    {
-        let abi_addr = parse_addr(constant::ABI_ADDRESS)?;
-        let data = [contract_addr.as_slice(), abi].concat();
-        let tx_hash = self
-            .send_tx(
-                signer,
-                abi_addr.to_vec(),
-                data,
-                vec![0; 32],
-                quota,
-                valid_until_block,
-            )
-            .await?;
-
-        Ok(tx_hash)
-    }
-}
+// #[tonic::async_trait]
+// pub trait EvmBehaviourExt {
+//     async fn store_contract_abi<S>(
+//         &self,
+//         signer: &S,
+//         contract_addr: Address,
+//         abi: &[u8],
+//         quota: u64,
+//         valid_until_block: u64,
+//         need_package: bool,
+//     ) -> Result<Hash>
+//     where
+//         S: SignerBehaviour + Send + Sync;
+// }
+//
+// #[tonic::async_trait]
+// impl<T> EvmBehaviourExt for T
+// where
+//     T: TransactionSenderBehaviour + Send + Sync,
+// {
+//     // The binary protocol is the implementation details of the current EVM service.
+//     async fn store_contract_abi<S>(
+//         &self,
+//         signer: &S,
+//         contract_addr: Address,
+//         abi: &[u8],
+//         quota: u64,
+//         valid_until_block: u64,
+//         need_package: bool,
+//     ) -> Result<Hash>
+//     where
+//         S: SignerBehaviour + Send + Sync,
+//     {
+//         let abi_addr = parse_addr(constant::ABI_ADDRESS)?;
+//         let data = [contract_addr.as_slice(), abi].concat();
+//         let tx_hash = self
+//             .send_tx(
+//                 signer,
+//                 abi_addr.to_vec(),
+//                 data,
+//                 vec![0; 32],
+//                 quota,
+//                 valid_until_block,
+//                 need_package,
+//             )
+//             .await?;
+//
+//         Ok(tx_hash)
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
     use super::constant::*;
     use super::*;
+    use crate::common::util::parse_addr;
     use crate::common::util::parse_data;
 
     #[test]

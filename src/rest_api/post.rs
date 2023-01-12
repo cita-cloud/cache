@@ -17,16 +17,16 @@ use std::{u64, usize};
 use crate::cita_cloud::controller::{SignerBehaviour, TransactionSenderBehaviour};
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
-use crate::cita_cloud::wallet::{MaybeLocked, MultiCryptoAccount};
-use crate::common::constant::{ADMIN_ACCOUNT, BLOCK_NUMBER, SYSTEM_CONFIG};
+use crate::cita_cloud::wallet::MaybeLocked;
+use crate::common::context::BlockContext;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
 use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
 use crate::core::context::Context;
-use crate::core::key_manager::{contract_key, key_without_param, CacheBehavior, CacheManager};
+use crate::core::key_manager::{contract_key, CacheBehavior, CacheManager};
 use crate::rest_api::common::{failure, success, CacheResult};
 use crate::{
-    get, ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash,
+    ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash,
 };
 use anyhow::Result;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
@@ -74,7 +74,7 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for CreateContract {
         _controller: ControllerClient,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
-        let current = get(key_without_param(BLOCK_NUMBER.to_string()))?.parse::<u64>()?;
+        let current = BlockContext::current_height()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = Vec::new();
         let data = parse_data(self.data.clone().as_str())?;
@@ -89,10 +89,9 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for CreateContract {
         let quota = hex_without_0x(bytes_quota.as_slice());
         let quota = u64::from_str_radix(quota.as_str(), 16)?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
-        let system_config: Value =
-            serde_json::from_str(get(key_without_param(SYSTEM_CONFIG.to_string()))?.as_str())?;
-        let version = system_config.get("version").unwrap().as_u64().unwrap() as u32;
-        let chain_id = parse_data(system_config.get("chain_id").unwrap().as_str().unwrap())?;
+        let system_config = BlockContext::system_config()?;
+        let version = system_config.version;
+        let chain_id = system_config.chain_id;
         let nonce = rand::random::<u64>().to_string();
         Ok(CloudNormalTransaction {
             version,
@@ -138,7 +137,7 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for SendTx {
         _controller: ControllerClient,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
-        let current = get(key_without_param(BLOCK_NUMBER.to_string()))?.parse::<u64>()?;
+        let current = BlockContext::current_height()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = parse_addr(self.to.clone().as_str())?;
         let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
@@ -154,10 +153,9 @@ impl<S: SignerBehaviour + Send + Sync> ToTx<S> for SendTx {
             .bytes_quota;
         let quota = hex_without_0x(bytes_quota.as_slice());
         let quota = u64::from_str_radix(quota.as_str(), 16)?;
-        let system_config: Value =
-            serde_json::from_str(get(key_without_param(SYSTEM_CONFIG.to_string()))?.as_str())?;
-        let version = system_config.get("version").unwrap().as_u64().unwrap() as u32;
-        let chain_id = parse_data(system_config.get("chain_id").unwrap().as_str().unwrap())?;
+        let system_config = BlockContext::system_config()?;
+        let version = system_config.version;
+        let chain_id = system_config.chain_id;
         let nonce = rand::random::<u64>().to_string();
         Ok(CloudNormalTransaction {
             version,
@@ -199,13 +197,12 @@ async fn create_contract(
     controller: ControllerClient,
     create_contract: CreateContract,
 ) -> Result<Hash> {
-    let account_str = get(key_without_param(ADMIN_ACCOUNT.to_string()))?;
-    let maybe: MaybeLocked = toml::from_str::<MaybeLocked>(&account_str)?;
-    let account: &MultiCryptoAccount = maybe.unlocked()?;
+    let maybe: MaybeLocked = BlockContext::current_account()?;
+    let account = maybe.unlocked()?;
     let tx = create_contract
         .to(account, controller.clone(), evm.clone())
         .await?;
-    controller.send_raw_tx(account, tx).await
+    controller.send_raw_tx(account, tx, true).await
 }
 
 ///Create contract
@@ -219,19 +216,18 @@ pub async fn create(
     result: Json<CreateContract>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    match create_contract(ctx.evm.clone(), ctx.controller.clone(), result.0).await {
+    match create_contract(ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
         Ok(data) => Json(success(data.to_json())),
         Err(e) => Json(failure(e)),
     }
 }
 
 async fn create_tx(evm: EvmClient, controller: ControllerClient, send_tx: SendTx) -> Result<Hash> {
-    let account_str = get(key_without_param(ADMIN_ACCOUNT.to_string()))?;
-    let maybe: MaybeLocked = toml::from_str(&account_str)?;
-    let account: &MultiCryptoAccount = maybe.unlocked()?;
+    let maybe: MaybeLocked = BlockContext::current_account()?;
+    let account = maybe.unlocked()?;
     let tx = send_tx.to(account, controller.clone(), evm.clone()).await?;
 
-    controller.send_raw_tx(account, tx).await
+    controller.send_raw_tx(account, tx, true).await
 }
 
 ///Send Transaction
@@ -245,7 +241,7 @@ pub async fn send_tx(
     result: Json<SendTx>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    match create_tx(ctx.evm.clone(), ctx.controller.clone(), result.0).await {
+    match create_tx(ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
         Ok(data) => Json(success(data.to_json())),
         Err(e) => Json(failure(e)),
     }
@@ -266,7 +262,12 @@ async fn call_or_load(
     let data = parse_data(result.data.as_str())?;
     let height = result.height.unwrap_or_default();
     let expire_time = config.expire_time.unwrap() as usize;
-    CacheManager::load_or_query(key, expire_time, ctx.executor.call(from, to, data, height)).await
+    CacheManager::load_or_query(
+        key,
+        expire_time,
+        ctx.local_executor.call(from, to, data, height),
+    )
+    .await
 }
 ///Call
 #[post("/call", data = "<result>")]

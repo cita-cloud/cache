@@ -25,7 +25,8 @@ use crate::cita_cloud::evm::EvmClient;
 use crate::cita_cloud::executor::ExecutorClient;
 use crate::common::cache_log::LOGGER;
 use crate::common::constant::{
-    CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
+    CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, LOCAL_EVM_CLIENT,
+    LOCAL_EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
 };
 use crate::common::crypto::{ArrayLike, EthCrypto, Hash, SmCrypto};
 use crate::common::display::Display;
@@ -39,7 +40,8 @@ use anyhow::Result;
 use log::{set_logger, set_max_level};
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
-    abi, account_nonce, balance, block, block_hash, block_number, code, receipt, system_config, tx,
+    abi, account_nonce, balance, block, block_hash, block_number, code, receipt, receipt_inner,
+    system_config, tx,
 };
 use rest_api::post::{call, create, send_tx};
 use rocket::config::LogLevel;
@@ -53,8 +55,8 @@ use crate::cita_cloud::wallet::CryptoType;
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::core::schedule_task::{
-    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, ScheduleTask,
-    UsefulParamTask,
+    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PackTxTask,
+    ScheduleTask, UsefulParamTask,
 };
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
@@ -81,6 +83,7 @@ fn rocket(figment: Figment) -> Rocket<Build> {
                 tx,
                 account_nonce,
                 receipt,
+                receipt_inner,
                 system_config,
                 block_hash,
                 call,
@@ -97,6 +100,7 @@ fn rocket(figment: Figment) -> Rocket<Build> {
 pub struct CacheConfig {
     controller_addr: Option<String>,
     executor_addr: Option<String>,
+    local_executor_addr: Option<String>,
     crypto_addr: Option<String>,
     redis_addr: Option<String>,
     timing_internal_sec: Option<u64>,
@@ -116,6 +120,7 @@ impl Default for CacheConfig {
         Self {
             controller_addr: Some("http://127.0.0.1:50004".to_string()),
             executor_addr: Some("http://127.0.0.1:50002".to_string()),
+            local_executor_addr: Some("http://127.0.0.1:55556".to_string()),
             crypto_addr: Some("http://127.0.0.1:50005".to_string()),
             redis_addr: Some("redis://default:rivtower@127.0.0.1:6379".to_string()),
             timing_internal_sec: Some(1),
@@ -134,6 +139,7 @@ impl Display for CacheConfig {
         json!({
             "controller_addr": self.controller_addr,
             "executor_addr": self.executor_addr,
+            "local_executor_addr": self.local_executor_addr,
             "crypto_addr": self.crypto_addr,
             "redis_addr": self.redis_addr,
             "timing_internal_sec": self.timing_internal_sec,
@@ -165,6 +171,7 @@ async fn set_param(
     let ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient> = Context::new(
         config.controller_addr.unwrap_or_default(),
         config.executor_addr.unwrap_or_default(),
+        config.local_executor_addr.unwrap_or_default(),
         config.crypto_addr.unwrap_or_default(),
         config.redis_addr.unwrap_or_default(),
         config.workers,
@@ -175,7 +182,13 @@ async fn set_param(
     if let Err(e) = EXECUTOR_CLIENT.set(ctx.executor.clone()) {
         panic!("store executor client error: {:?}", e);
     }
+    if let Err(e) = LOCAL_EXECUTOR_CLIENT.set(ctx.local_executor.clone()) {
+        panic!("store local executor client error: {:?}", e);
+    }
     if let Err(e) = EVM_CLIENT.set(ctx.evm.clone()) {
+        panic!("store evm client error: {:?}", e);
+    }
+    if let Err(e) = LOCAL_EVM_CLIENT.set(ctx.local_evm.clone()) {
         panic!("store evm client error: {:?}", e);
     }
     if let Err(e) = CRYPTO_CLIENT.set(ctx.crypto.clone()) {
@@ -213,6 +226,11 @@ async fn main() {
         Err(e) => warn!("cache manager set up fail: {}", e),
     }
     tokio::spawn(CommitTxTask::schedule(
+        timing_internal_sec,
+        timing_batch,
+        expire_time,
+    ));
+    tokio::spawn(PackTxTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
