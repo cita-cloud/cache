@@ -14,10 +14,10 @@
 
 use std::{u64, usize};
 
-use crate::cita_cloud::controller::{SignerBehaviour, TransactionSenderBehaviour};
+use crate::cita_cloud::controller::TransactionSenderBehaviour;
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
-use crate::cita_cloud::wallet::MaybeLocked;
+use crate::cita_cloud::wallet::{MaybeLocked, MultiCryptoAccount};
 use crate::common::context::BlockContext;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
@@ -28,22 +28,80 @@ use crate::rest_api::common::{failure, success, CacheResult};
 use crate::{
     ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use utoipa::ToSchema;
 
 #[tonic::async_trait]
-trait ToTx<S: SignerBehaviour + Send + Sync> {
+pub trait ToTx {
     async fn to(
         &self,
-        account: &S,
-        controller: ControllerClient,
+        account: &MultiCryptoAccount,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction>;
+
+    async fn estimate_quota(
+        &self,
+        evm: EvmClient,
+        from: Address,
+        to: Address,
+        data: Vec<u8>,
+    ) -> Result<u64> {
+        let bytes_quota = evm.estimate_quota(from, to, data).await?.bytes_quota;
+        let quota = hex_without_0x(bytes_quota.as_slice());
+        Ok(u64::from_str_radix(quota.as_str(), 16)?)
+    }
+}
+
+#[derive(Clone)]
+pub struct PackageTx {
+    pub from: Address,
+    pub to: Address,
+    pub data: Vec<u8>,
+    pub value: Vec<u8>,
+    pub block_count: u64,
+}
+
+#[tonic::async_trait]
+impl ToTx for PackageTx {
+    async fn to(
+        &self,
+        _account: &MultiCryptoAccount,
+        evm: EvmClient,
+    ) -> Result<CloudNormalTransaction> {
+        let current = BlockContext::current_cita_height()?;
+        let valid_until_block: u64 = current + self.block_count;
+        let to = self.to.clone().to_vec();
+        let data = self.data.clone();
+        let quota = self
+            .estimate_quota(evm, self.from, self.to, self.data.clone())
+            .await?;
+        let value = self.value.clone();
+        let system_config = BlockContext::system_config()?;
+        let version = system_config.version;
+        let chain_id = system_config.chain_id;
+        let nonce = rand::random::<u64>().to_string();
+        Ok(CloudNormalTransaction {
+            version,
+            to,
+            data,
+            value,
+            nonce,
+            quota,
+            valid_until_block,
+            chain_id,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
+pub struct ChangeRole {
+    #[schema(example = true)]
+    pub is_master: bool,
 }
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
 pub struct CreateContract {
@@ -55,6 +113,7 @@ pub struct CreateContract {
     pub value: Option<String>,
     #[schema(example = 20)]
     pub block_count: Option<i64>,
+    pub local_execute: bool,
 }
 
 impl Default for CreateContract {
@@ -63,31 +122,29 @@ impl Default for CreateContract {
             data: "0x608060405234801561001057600080fd5b5060f58061001f6000396000f3006080604052600436106053576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806306661abd1460585780634f2be91f146080578063d826f88f146094575b600080fd5b348015606357600080fd5b50606a60a8565b6040518082815260200191505060405180910390f35b348015608b57600080fd5b50609260ae565b005b348015609f57600080fd5b5060a660c0565b005b60005481565b60016000808282540192505081905550565b600080819055505600a165627a7a72305820faa1d1f51d7b5ca2b200e0f6cdef4f2d7e44ee686209e300beb1146f40d32dee0029".to_string(),
             value: Some("0x0".to_string()),
             block_count: Some(20),
+            local_execute: true,
         }
     }
 }
 #[tonic::async_trait]
-impl<S: SignerBehaviour + Send + Sync> ToTx<S> for CreateContract {
+impl ToTx for CreateContract {
     async fn to(
         &self,
-        account: &S,
-        _controller: ControllerClient,
+        account: &MultiCryptoAccount,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
-        let current = BlockContext::current_height()?;
+        let current = BlockContext::current_cita_height()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = Vec::new();
         let data = parse_data(self.data.clone().as_str())?;
-        let bytes_quota = evm
+        let quota = self
             .estimate_quota(
+                evm,
                 Address::try_from_slice(account.address())?,
                 Address::default(),
                 data.clone(),
             )
-            .await?
-            .bytes_quota;
-        let quota = hex_without_0x(bytes_quota.as_slice());
-        let quota = u64::from_str_radix(quota.as_str(), 16)?;
+            .await?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
         let system_config = BlockContext::system_config()?;
         let version = system_config.version;
@@ -116,6 +173,7 @@ pub struct SendTx {
     pub value: Option<String>,
     #[schema(example = 20)]
     pub block_count: Option<i64>,
+    pub local_execute: bool,
 }
 
 impl Default for SendTx {
@@ -125,34 +183,32 @@ impl Default for SendTx {
             data: Some("0x4f2be91f".to_string()),
             value: Some("0x0".to_string()),
             block_count: Some(20),
+            local_execute: true,
         }
     }
 }
 
 #[tonic::async_trait]
-impl<S: SignerBehaviour + Send + Sync> ToTx<S> for SendTx {
+impl ToTx for SendTx {
     async fn to(
         &self,
-        account: &S,
-        _controller: ControllerClient,
+        account: &MultiCryptoAccount,
         evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
-        let current = BlockContext::current_height()?;
+        let current = BlockContext::current_cita_height()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = parse_addr(self.to.clone().as_str())?;
         let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
-
-        let bytes_quota = evm
+        let quota = self
             .estimate_quota(
+                evm,
                 Address::try_from_slice(account.address())?,
                 to,
                 data.clone(),
             )
-            .await?
-            .bytes_quota;
-        let quota = hex_without_0x(bytes_quota.as_slice());
-        let quota = u64::from_str_radix(quota.as_str(), 16)?;
+            .await?;
+
         let system_config = BlockContext::system_config()?;
         let version = system_config.version;
         let chain_id = system_config.chain_id;
@@ -199,10 +255,24 @@ async fn create_contract(
 ) -> Result<Hash> {
     let maybe: MaybeLocked = BlockContext::current_account()?;
     let account = maybe.unlocked()?;
-    let tx = create_contract
-        .to(account, controller.clone(), evm.clone())
-        .await?;
-    controller.send_raw_tx(account, tx, true).await
+    let tx = create_contract.to(account, evm.clone()).await?;
+    controller
+        .send_raw_tx(account, tx, create_contract.local_execute)
+        .await
+}
+
+///Change role online
+#[post("/change-role", data = "<result>")]
+#[utoipa::path(
+post,
+path = "/api/change-role",
+request_body = ChangeRole,
+)]
+pub async fn change_role(result: Json<ChangeRole>) -> Json<CacheResult<Value>> {
+    match BlockContext::change_role(result.is_master) {
+        Ok(data) => Json(success(json!(data))),
+        Err(e) => Json(failure(anyhow!(e))),
+    }
 }
 
 ///Create contract
@@ -225,9 +295,11 @@ pub async fn create(
 async fn create_tx(evm: EvmClient, controller: ControllerClient, send_tx: SendTx) -> Result<Hash> {
     let maybe: MaybeLocked = BlockContext::current_account()?;
     let account = maybe.unlocked()?;
-    let tx = send_tx.to(account, controller.clone(), evm.clone()).await?;
+    let tx = send_tx.to(account, evm.clone()).await?;
 
-    controller.send_raw_tx(account, tx, true).await
+    controller
+        .send_raw_tx(account, tx, send_tx.local_execute)
+        .await
 }
 
 ///Send Transaction

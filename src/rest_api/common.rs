@@ -91,9 +91,10 @@ block_hash,
 call,
 create,
 send_tx,
+change_role,
 ),
 components(
-schemas(SuccessResult, FailureResult, CreateContract<'_>, SendTx<'_>, Call<'_>)
+schemas(SuccessResult, FailureResult, CreateContract<'_>, SendTx<'_>, Call<'_>, ChangeRole)
 )
 )]
 pub struct ApiDoc;

@@ -28,11 +28,11 @@ use crate::common::constant::{
     CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, LOCAL_EVM_CLIENT,
     LOCAL_EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
 };
-use crate::common::crypto::{ArrayLike, EthCrypto, Hash, SmCrypto};
+use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
 use crate::core::context::Context;
 use crate::redis::{
-    delete, exists, get, hdel, hget, hset, keys, pool, psubscribe, smembers, srem, zadd,
+    delete, exists, get, hdel, hget, hset, incr_one, keys, pool, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem,
 };
 use ::log::LevelFilter;
@@ -43,7 +43,7 @@ use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, receipt, receipt_inner,
     system_config, tx,
 };
-use rest_api::post::{call, create, send_tx};
+use rest_api::post::{call, change_role, create, send_tx};
 use rocket::config::LogLevel;
 use rocket::fairing::AdHoc;
 use rocket::{routes, Build, Rocket};
@@ -52,11 +52,12 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::cita_cloud::wallet::CryptoType;
+use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::core::schedule_task::{
     CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PackTxTask,
-    ScheduleTask, UsefulParamTask,
+    PollTxsTask, ReplayTask, ScheduleTask, UsefulParamTask,
 };
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
@@ -89,6 +90,7 @@ fn rocket(figment: Figment) -> Rocket<Build> {
                 call,
                 create,
                 send_tx,
+                change_role,
             ],
         )
         .register("/", catchers![uri_not_found])
@@ -113,6 +115,7 @@ pub struct CacheConfig {
     rough_internal: Option<u64>,
     workers: u64,
     crypto_type: CryptoType,
+    is_master: bool,
 }
 
 impl Default for CacheConfig {
@@ -131,6 +134,7 @@ impl Default for CacheConfig {
             rough_internal: Some(10),
             workers: 1,
             crypto_type: CryptoType::Sm,
+            is_master: true,
         }
     }
 }
@@ -150,6 +154,7 @@ impl Display for CacheConfig {
             "rough_internal": self.rough_internal,
             "workers": self.workers,
             "crypto_type": self.crypto_type,
+            "is_master": self.is_master,
         })
     }
 }
@@ -221,52 +226,39 @@ async fn main() {
     }
     info!("cache config: {}", config.display());
     let (ctx, timing_internal_sec, timing_batch, expire_time) = set_param(config.clone()).await;
+    match BlockContext::set_up(expire_time, config.crypto_type, config.is_master).await {
+        Ok(_) => info!("block context set up success!"),
+        Err(e) => warn!("block context set up fail: {}", e),
+    }
     match CacheManager::set_up().await {
         Ok(_) => info!("cache manager set up success!"),
         Err(e) => warn!("cache manager set up fail: {}", e),
     }
-    tokio::spawn(CommitTxTask::schedule(
-        timing_internal_sec,
-        timing_batch,
-        expire_time,
-    ));
-    tokio::spawn(PackTxTask::schedule(
-        timing_internal_sec,
-        timing_batch,
-        expire_time,
-    ));
-    tokio::spawn(CheckTxTask::schedule(
-        timing_internal_sec,
-        timing_batch,
-        expire_time,
-    ));
+    let seconds = timing_internal_sec * 1000;
+    tokio::spawn(CommitTxTask::schedule(seconds, timing_batch, expire_time));
+    tokio::spawn(PackTxTask::schedule(seconds, timing_batch, expire_time));
+    tokio::spawn(CheckTxTask::schedule(seconds, timing_batch, expire_time));
     tokio::spawn(EvictExpiredKeyTask::schedule(
-        timing_internal_sec * 10,
+        seconds * 10,
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(LazyEvictExpiredKeyTask::schedule(
-        timing_internal_sec * 2,
-        timing_batch,
-        expire_time,
-    ));
-    tokio::spawn(UsefulParamTask::<SmCrypto>::schedule(
+    tokio::spawn(PollTxsTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
     ));
-    match config.crypto_type {
-        CryptoType::Sm => tokio::spawn(UsefulParamTask::<SmCrypto>::schedule(
-            timing_internal_sec,
-            timing_batch,
-            expire_time,
-        )),
-        CryptoType::Eth => tokio::spawn(UsefulParamTask::<EthCrypto>::schedule(
-            timing_internal_sec,
-            timing_batch,
-            expire_time,
-        )),
-    };
+    tokio::spawn(ReplayTask::schedule(seconds, timing_batch, expire_time));
+    tokio::spawn(LazyEvictExpiredKeyTask::schedule(
+        seconds * 2,
+        timing_batch,
+        expire_time,
+    ));
+    tokio::spawn(UsefulParamTask::schedule(
+        seconds,
+        timing_batch,
+        expire_time,
+    ));
 
     let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<CacheConfig>());
 

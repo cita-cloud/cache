@@ -14,6 +14,7 @@ log_level = "critical"
 expire_time = 60
 rough_internal = 10
 crypto_type = "SM"
+is_master = true
 
 ## set only when compiled in debug mode, i.e, `cargo build`
 [debug]
@@ -27,6 +28,35 @@ redis_addr = "redis://default:rivtower@127.0.0.1:6379"
 timing_internal_sec = 1
 timing_batch = 100
 log_level = "normal"
+is_master = true
+
+[local_master]
+port = 8000
+## only the `json` key from `default` will be overridden; `form` will remain
+limits = { json = "10MiB" }
+controller_addr = "http://docker.for.mac.host.internal:50004"
+executor_addr = "http://docker.for.mac.host.internal:50002"
+local_executor_addr = "http://master-executor:55556"
+crypto_addr = "http://docker.for.mac.host.internal:50005"
+redis_addr = "redis://default:rivtower@master-redis:6379"
+timing_internal_sec = 1
+timing_batch = 100
+log_level = "normal"
+is_master = true
+
+[local_validator]
+port = 8000
+## only the `json` key from `default` will be overridden; `form` will remain
+limits = { json = "10MiB" }
+controller_addr = "http://docker.for.mac.host.internal:50004"
+executor_addr = "http://docker.for.mac.host.internal:50002"
+local_executor_addr = "http://validator-executor:55556"
+crypto_addr = "http://docker.for.mac.host.internal:50005"
+redis_addr = "redis://default:rivtower@validator-redis:6379"
+timing_internal_sec = 1
+timing_batch = 100
+log_level = "normal"
+is_master = false
 
 ## set only when the `nyc` profile is selected
 [test]
@@ -44,6 +74,7 @@ log_level = "normal"
 expire_time = 60
 rough_internal = 10
 crypto_type = "SM"
+is_master = true
 
 ## set only when compiled in release mode, i.e, `cargo build --release`
 ## don't use this secret_key! generate your own and keep it private!
@@ -56,3 +87,4 @@ redis_addr = "redis://default:rivtower@127.0.0.1:6379"
 timing_internal_sec = 1
 timing_batch = 100
 log_level = "critical"
+is_master = true

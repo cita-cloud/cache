@@ -14,33 +14,30 @@
 
 use crate::cita_cloud::{controller::ControllerBehaviour, evm::EvmBehaviour};
 use crate::common::constant::{
-    controller, evm, local_executor, rough_internal, COMMITTED_TX, CONTRACT_KEY,
-    EVICT_TO_ROUGH_TIME, EXPIRED_KEY_EVENT_AT_ALL_DB, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE,
-    KEY_PREFIX, LAZY_EVICT_TO_TIME, ONE_THOUSAND, PACK_UNCOMMITTED_TX, SET_TYPE, TIME_TO_CLEAN_UP,
-    UNCOMMITTED_TX, VAL_TYPE, ZSET_TYPE,
+    controller, evm, local_executor, rough_internal, ADMIN_ACCOUNT, CITA_CLOUD_BLOCK_NUMBER,
+    COMMITTED_TX, CONTRACT_KEY, CURRENT_BATCH_NUMBER, CURRENT_FAKE_BLOCK_HASH, EVICT_TO_ROUGH_TIME,
+    EXPIRED_KEY_EVENT_AT_ALL_DB, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE, KEY_PREFIX,
+    LAZY_EVICT_TO_TIME, ONE_THOUSAND, PACK_UNCOMMITTED_TX, ROLLUP_WRITE_ENABLE, SET_TYPE,
+    SYSTEM_CONFIG, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VALIDATE_TX_BUFFER, VALIDATOR_BATCH_NUMBER,
+    VAL_TYPE, ZSET_TYPE,
 };
-use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, timestamp};
+use crate::common::util::{hex_without_0x, parse_data, timestamp};
 use crate::redis::{hexists, sadd, smove, ttl};
 use crate::{
-    delete, exists, get, hdel, hget, hset, keys, psubscribe, smembers, srem, zadd,
+    delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
 };
 use anyhow::{anyhow, Result};
-use cita_cloud_proto::blockchain::{
-    raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions,
-    Transaction as CloudNormalTransaction,
-};
+use cita_cloud_proto::blockchain::{raw_transaction::Tx, Block, RawTransaction};
 
 use crate::cita_cloud::controller::{SignerBehaviour, TransactionSenderBehaviour};
-use crate::cita_cloud::evm::constant::STORE_ADDRESS;
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
 use crate::common::context::{BlockContext, LocalBehaviour};
-use crate::common::crypto::Address;
 use crate::common::package::Package;
 use crate::common::util::hex;
-use cloud_util::unix_now;
-use msgpack_schema::serialize;
+use crate::rest_api::post::ToTx;
+use msgpack_schema::deserialize;
 use prost::Message;
 use r2d2_redis::redis::{ControlFlow, FromRedisValue, ToRedisArgs};
 use serde_json::Value;
@@ -49,6 +46,7 @@ use std::future::Future;
 fn uncommitted_tx_key() -> String {
     format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, UNCOMMITTED_TX)
 }
+
 fn pack_uncommitted_tx_key() -> String {
     format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, PACK_UNCOMMITTED_TX)
 }
@@ -57,7 +55,11 @@ fn committed_tx_key() -> String {
     format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, COMMITTED_TX)
 }
 
-fn hash_to_tx() -> String {
+pub fn validate_tx_buffer() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, VALIDATE_TX_BUFFER)
+}
+
+pub fn hash_to_tx() -> String {
     format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_TX)
 }
 
@@ -67,9 +69,6 @@ fn hash_to_block_number() -> String {
 
 fn clean_up_key(time: u64) -> String {
     format!("{}:{}:{}:{}", KEY_PREFIX, SET_TYPE, TIME_TO_CLEAN_UP, time)
-}
-fn clean_up_pattern() -> String {
-    format!("{}*", clean_up_prefix())
 }
 
 fn clean_up_prefix() -> String {
@@ -86,6 +85,37 @@ fn evict_to_rough_time() -> String {
 
 fn val_prefix() -> String {
     format!("{}:{}", KEY_PREFIX, VAL_TYPE)
+}
+
+pub fn current_batch_number() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, CURRENT_BATCH_NUMBER)
+}
+
+pub fn validator_batch_number() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, VALIDATOR_BATCH_NUMBER)
+}
+
+pub fn current_fake_block_hash() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, CURRENT_FAKE_BLOCK_HASH)
+}
+
+pub fn rollup_write_enable() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, ROLLUP_WRITE_ENABLE)
+}
+pub fn cita_cloud_block_number_key() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, CITA_CLOUD_BLOCK_NUMBER)
+}
+
+pub fn system_config_key() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, SYSTEM_CONFIG)
+}
+
+pub fn admin_account_key() -> String {
+    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, ADMIN_ACCOUNT)
+}
+
+fn clean_up_pattern() -> String {
+    format!("{}*", clean_up_prefix())
 }
 
 fn current_clean_up_key() -> String {
@@ -180,7 +210,18 @@ pub trait PackBehavior {
 }
 
 #[tonic::async_trait]
-pub trait CacheBehavior: ExpiredBehavior + ValBehavior + ContractBehavior + PackBehavior {
+pub trait ValidatorBehavior {
+    fn enqueue_to_buffer(hash_str: String, package_data: Vec<u8>, batch_number: u64) -> Result<()>;
+    fn dequeue_smallest_from_buffer() -> Result<Vec<(String, u64)>>;
+    fn clean(member: String) -> Result<()>;
+    async fn poll(timing_batch: isize, expire_time: usize) -> Result<()>;
+    async fn replay(timing_batch: isize, expire_time: usize) -> Result<()>;
+}
+
+#[tonic::async_trait]
+pub trait CacheBehavior:
+    ExpiredBehavior + ValBehavior + ContractBehavior + PackBehavior + ValidatorBehavior
+{
     fn enqueue(
         hash_str: String,
         tx: Vec<u8>,
@@ -209,6 +250,8 @@ pub trait CacheBehavior: ExpiredBehavior + ValBehavior + ContractBehavior + Pack
     fn expire(key: String, seconds: usize) -> Result<u64>;
 
     fn clean_up_expired(key: String, member: String) -> Result<()>;
+
+    fn clean_up_packaged_txs(hash_list: Vec<String>) -> Result<()>;
 
     async fn commit(timing_batch: isize, expire_time: usize) -> Result<()>;
 
@@ -324,6 +367,7 @@ impl TxBehavior for CacheManager {
     }
 
     fn clean_up_tx(tx_hash: String) -> Result<()> {
+        zrem(pack_uncommitted_tx_key(), tx_hash.clone())?;
         zrem(committed_tx_key(), tx_hash.clone())?;
         zrem(uncommitted_tx_key(), tx_hash.clone())?;
         hdel(hash_to_tx(), tx_hash.clone())?;
@@ -393,78 +437,30 @@ impl PackBehavior for CacheManager {
             tx_list.push(decoded);
             hash_list.push(tx_hash);
         }
-        let height = BlockContext::get_current_height().await?;
+        let batch_number = BlockContext::get_batch_number().await?;
         let maybe: MaybeLocked = BlockContext::current_account()?;
         let account = maybe.unlocked()?;
-        let header = BlockHeader {
-            prevhash: BlockContext::get_current_block_hash().await?,
-            timestamp: unix_now(),
-            height,
-            transactions_root: vec![0u8; 32],
-            proposer: account.address().to_vec(),
-        };
+        let proposer = account.address().to_vec();
+        let block = BlockContext::fake_block(proposer, tx_list).await?;
 
-        let block = Block {
-            version: 0,
-            header: Some(header.clone()),
-            body: Some(RawTransactions { body: tx_list }),
-            proof: Vec::new(),
-            state_root: Vec::new(),
-        };
         if let Ok(res) = local_executor().exec(block.clone()).await {
             if let Some(status) = res.status {
                 if status.code == 0 {
-                    let mut block_bytes = Vec::new();
-                    block.encode(&mut block_bytes).expect("encode block failed");
-                    let package = Package {
-                        batch_number: height,
-                        block: block_bytes,
-                    };
-                    let current = BlockContext::current_height()?;
-                    let valid_until_block: u64 = (current as i64 + 20) as u64;
-                    let to = parse_addr(STORE_ADDRESS)?;
-                    let data = serialize(package);
-                    let value = parse_value("0x0")?.to_vec();
+                    let packaged_tx = Package::new(batch_number, block.clone())
+                        .to_packaged_tx(*account.address())?;
+                    controller()
+                        .send_raw_tx(account, packaged_tx.to(account, evm()).await?, false)
+                        .await?;
+                    info!("package batch: {}.", batch_number);
 
-                    let bytes_quota = evm()
-                        .estimate_quota(
-                            Address::try_from_slice(account.address())?,
-                            to,
-                            data.clone(),
-                        )
-                        .await?
-                        .bytes_quota;
-                    let quota = hex_without_0x(bytes_quota.as_slice());
-                    let quota = u64::from_str_radix(quota.as_str(), 16)?;
-                    let system_config = BlockContext::system_config()?;
-                    let version = system_config.version;
-                    let chain_id = system_config.chain_id;
-                    let nonce = rand::random::<u64>().to_string();
-                    let tx = CloudNormalTransaction {
-                        version,
-                        to: to.to_vec(),
-                        data,
-                        value,
-                        nonce,
-                        quota,
-                        valid_until_block,
-                        chain_id,
-                    };
-                    controller().send_raw_tx(account, tx, false).await?;
-
-                    for hash in hash_list {
-                        zrem(pack_uncommitted_tx_key(), hash.clone())?;
-                    }
+                    let header = block.header.expect("get block header failed");
                     let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
                     header
                         .encode(&mut block_header_bytes)
                         .expect("encode block header failed");
                     let block_hash = account.hash(block_header_bytes.as_slice());
-                    let hash_str = hex(block_hash.as_slice());
-                    info!("local execute tx success, block hash: {}", hash_str);
-
-                    BlockContext::increase_block_height()?;
-                    BlockContext::set_current_block_hash(hash_str)?;
+                    Self::clean_up_packaged_txs(hash_list)?;
+                    BlockContext::step_next(block_hash)?;
                 }
             }
         }
@@ -472,6 +468,111 @@ impl PackBehavior for CacheManager {
     }
 }
 
+#[tonic::async_trait]
+impl ValidatorBehavior for CacheManager {
+    fn enqueue_to_buffer(hash_str: String, package_data: Vec<u8>, batch_number: u64) -> Result<()> {
+        info!(
+            "enqueue tx to validator buffer, hash: {}, batch number: {}",
+            hash_str, batch_number
+        );
+        zadd(validate_tx_buffer(), hash_str.clone(), batch_number)?;
+        hset(hash_to_tx(), hash_str, package_data)?;
+        Ok(())
+    }
+
+    fn dequeue_smallest_from_buffer() -> Result<Vec<(String, u64)>> {
+        Ok(zrange_withscores::<String>(validate_tx_buffer(), 0, 0)?)
+    }
+
+    fn clean(member: String) -> Result<()> {
+        zrem(validate_tx_buffer(), member.clone())?;
+        hdel(hash_to_tx(), member)?;
+        Ok(())
+    }
+
+    async fn poll(_timing_batch: isize, _expire_time: usize) -> Result<()> {
+        let account = BlockContext::current_account()?;
+        let cita_height = BlockContext::current_cita_height()?;
+        let key = validator_batch_number();
+        let validator_current_height = if exists(key.clone())? {
+            get(key.clone())?
+        } else {
+            incr_one(key.clone())?
+        };
+        if validator_current_height >= cita_height {
+            return Ok(());
+        }
+        info!("validate cita cloud height: {}", validator_current_height);
+        let compact_block = controller()
+            .get_block_by_number(validator_current_height)
+            .await?;
+        let tx_hashs: Vec<Vec<u8>> = compact_block
+            .body
+            .expect("get compact body failed!")
+            .tx_hashes;
+        for hash in tx_hashs {
+            info!(
+                "validate cita cloud block [{}], has package txs",
+                validator_current_height
+            );
+            let raw = controller()
+                .get_tx(Hash::try_from_slice(hash.as_slice())?)
+                .await?;
+            if let Some(Tx::NormalTx(normal_tx)) = raw.tx {
+                let sender: Vec<u8> = normal_tx.witness.expect("get witness failed!").sender;
+                if sender == account.address().to_vec() {
+                    let package_data = normal_tx.transaction.expect("get transaction failed!").data;
+                    let decoded_package = deserialize::<Package>(package_data.clone().as_slice())?;
+                    let batch_number = decoded_package.batch_number;
+                    info!("poll batch: {}!", batch_number);
+                    let hash_str = hex(normal_tx.transaction_hash.as_slice());
+                    Self::enqueue_to_buffer(hash_str, package_data, batch_number)?;
+                }
+            }
+        }
+        incr_one(key)?;
+        Ok(())
+    }
+
+    async fn replay(_timing_batch: isize, _expire_time: usize) -> Result<()> {
+        for (member, batch_number) in Self::dequeue_smallest_from_buffer()? {
+            if batch_number == BlockContext::get_batch_number().await? {
+                info!("replay batch: {}!", batch_number);
+                let maybe = BlockContext::current_account()?;
+                let account = maybe.unlocked()?;
+
+                let raw = hget::<Vec<u8>>(hash_to_tx(), member.clone())?;
+                let decoded_package = deserialize::<Package>(raw.as_slice())?;
+                let block: Block = Message::decode(decoded_package.block.as_slice())?;
+                let mut header = block.header.expect("get block header failed");
+                header.prevhash = BlockContext::get_fake_block_hash().await?;
+                if let Ok(res) = local_executor()
+                    .exec(Block {
+                        version: 0,
+                        header: Some(header.clone()),
+                        body: block.body,
+                        proof: Vec::new(),
+                        state_root: Vec::new(),
+                    })
+                    .await
+                {
+                    if let Some(status) = res.status {
+                        if status.code == 0 {
+                            let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
+                            header
+                                .encode(&mut block_header_bytes)
+                                .expect("encode block header failed");
+                            let block_hash = account.hash(block_header_bytes.as_slice());
+                            BlockContext::step_next(block_hash)?;
+                            Self::clean(member)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
 #[tonic::async_trait]
 impl CacheBehavior for CacheManager {
     fn enqueue(
@@ -548,6 +649,13 @@ impl CacheBehavior for CacheManager {
 
     fn clean_up_expired(key: String, member: String) -> Result<()> {
         Self::delete_expire(key, member)
+    }
+
+    fn clean_up_packaged_txs(hash_list: Vec<String>) -> Result<()> {
+        for hash in hash_list {
+            zrem(pack_uncommitted_tx_key(), hash)?;
+        }
+        Ok(())
     }
 
     async fn commit(timing_batch: isize, expire_time: usize) -> Result<()> {

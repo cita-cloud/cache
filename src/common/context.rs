@@ -12,55 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::cita_cloud::controller::SignerBehaviour;
+use crate::cita_cloud::controller::{ControllerBehaviour, SignerBehaviour};
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
-use crate::common::constant::{
-    local_executor, ADMIN_ACCOUNT, BLOCK_NUMBER, CURRENT_BLOCK_HASH, CURRENT_BLOCK_NUMBER,
-    SYSTEM_CONFIG,
+use crate::common::constant::{controller, local_executor, ADMIN_ACCOUNT};
+use crate::common::util::{hex, timestamp};
+use crate::core::key_manager::{
+    admin_account_key, cita_cloud_block_number_key, key_without_param, rollup_write_enable,
+    system_config_key,
 };
-use crate::common::util::hex;
-use crate::common::util::timestamp;
-use crate::core::key_manager::key_without_param;
-use crate::redis::{get_num, incr, set};
-use crate::{exists, get};
+use crate::core::key_manager::{current_batch_number, current_fake_block_hash};
+use crate::redis::set;
+use crate::{exists, get, incr_one, CacheBehavior, CacheManager, CryptoType};
 use anyhow::{anyhow, Result};
 use cita_cloud_proto::{
-    blockchain::{Block, BlockHeader, RawTransactions},
+    blockchain::{Block, BlockHeader, RawTransaction, RawTransactions},
     controller::SystemConfig,
 };
-use cloud_util::clean_0x;
+use cloud_util::unix_now;
 use prost::Message;
+
 #[tonic::async_trait]
 pub trait LocalBehaviour {
-    async fn get_current_height() -> Result<u64>;
+    async fn set_up(expire_time: usize, crypto_type: CryptoType, is_master: bool) -> Result<()>;
+    async fn timing_update(expire_time: usize) -> Result<()>;
 
-    async fn get_current_block_hash() -> Result<Vec<u8>>;
+    async fn get_batch_number() -> Result<u64>;
 
-    fn increase_block_height() -> Result<u64>;
+    async fn get_fake_block_hash() -> Result<Vec<u8>>;
 
-    fn current_height_exist() -> Result<bool>;
-
-    fn current_block_hash_exist() -> Result<bool>;
-
-    fn set_current_block_hash(hash: String) -> Result<String>;
-
-    async fn commit_genesis_block() -> Result<()>;
-}
-
-#[tonic::async_trait]
-pub trait SystemParamBehaviour {
-    async fn get_current_height() -> Result<u64>;
-
-    async fn get_current_block_hash() -> Result<Vec<u8>>;
-
-    fn increase_block_height() -> Result<u64>;
-
-    fn current_height_exist() -> Result<bool>;
-
-    fn current_block_hash_exist() -> Result<bool>;
-
-    fn set_current_block_hash(hash: String) -> Result<String>;
+    async fn fake_block(proposer: Vec<u8>, tx_list: Vec<RawTransaction>) -> Result<Block>;
 
     async fn commit_genesis_block() -> Result<()>;
 }
@@ -68,68 +49,33 @@ pub trait SystemParamBehaviour {
 pub struct BlockContext;
 
 impl BlockContext {
-    pub fn current_height() -> Result<u64> {
-        let current = get::<u64>(key_without_param(BLOCK_NUMBER.to_string()))?;
+    fn create_admin_account(crypto_type: CryptoType) -> Result<()> {
+        let account_key = key_without_param(ADMIN_ACCOUNT.to_string());
+        let account_str = match crypto_type {
+            CryptoType::Sm => "crypto_type = 'SM'\naddress = '0x36fbd539ca0ade15bcfc453a79f5f33450749b51'\npublic_key = '0xc4162ace569f6e82be31b47b0ba4aa0cd991ef10dc98397aedc16fecf86636e4e6154649fe07671edc7c1965e87eefa1bd65018fcb39f16729cd246250b1116e'\nsecret_key = '0x67aef6c49c853f6022e27d2099aeeaf732f41a76770855b3837b8c000b4b945e'\n",
+            CryptoType::Eth => "crypto_type = 'ETH'\naddress = '0x82c00d52dc6b9857352c5632496fbf0b3ea05c5f'\npublic_key = '0xefebaa703b5ba34801c581139c358420196e0e179acdc532513e5098ebf7b28605fa014798db38260dbf788f8bd45b885265254cf932e90caf0b1e9b5ebf82de'\nsecret_key = '0xe230059d4c1be58ba1e4f063e977ec1c6d1f8d754a2e30a36af297619379230e'\n",
+        }.to_string();
+        set(account_key, account_str)?;
+        Ok(())
+    }
+    pub fn current_cita_height() -> Result<u64> {
+        let current = get::<u64>(cita_cloud_block_number_key())?;
         Ok(current)
     }
 
     pub fn system_config() -> Result<SystemConfig> {
-        let system_config = get::<Vec<u8>>(key_without_param(SYSTEM_CONFIG.to_string()))?;
+        let system_config = get::<Vec<u8>>(system_config_key())?;
         let config: SystemConfig = Message::decode(system_config.as_slice())?;
         Ok(config)
     }
 
     pub fn current_account() -> Result<MaybeLocked> {
-        let account_str = get::<String>(key_without_param(ADMIN_ACCOUNT.to_string()))?;
+        let account_str = get::<String>(admin_account_key())?;
         let maybe: MaybeLocked = toml::from_str::<MaybeLocked>(account_str.as_str())?;
         Ok(maybe)
     }
-}
 
-#[tonic::async_trait]
-impl LocalBehaviour for BlockContext {
-    fn increase_block_height() -> Result<u64> {
-        Ok(incr(key_without_param(CURRENT_BLOCK_NUMBER.to_string()))?)
-    }
-
-    async fn get_current_height() -> Result<u64> {
-        let key = key_without_param(CURRENT_BLOCK_NUMBER.to_string());
-        if exists(key.clone())? {
-            Ok(get_num(key.clone())?)
-        } else {
-            Self::commit_genesis_block().await?;
-            Ok(get_num(key.clone())?)
-        }
-    }
-
-    fn current_height_exist() -> Result<bool> {
-        Ok(exists(key_without_param(CURRENT_BLOCK_NUMBER.to_string()))?)
-    }
-
-    fn current_block_hash_exist() -> Result<bool> {
-        Ok(exists(key_without_param(CURRENT_BLOCK_HASH.to_string()))?)
-    }
-
-    async fn get_current_block_hash() -> Result<Vec<u8>> {
-        let key = key_without_param(CURRENT_BLOCK_HASH.to_string());
-        if exists(key.clone())? {
-            let hash_str: String = get(key.clone())?;
-            Ok(hex::decode(clean_0x(hash_str.as_str()))?)
-        } else {
-            Self::commit_genesis_block().await?;
-            let hash_str: String = get(key.clone())?;
-            Ok(hex::decode(clean_0x(hash_str.as_str()))?)
-        }
-    }
-
-    fn set_current_block_hash(hash: String) -> Result<String> {
-        let key = key_without_param(CURRENT_BLOCK_HASH.to_string());
-        Ok(set(key, hash)?)
-    }
-
-    async fn commit_genesis_block() -> Result<()> {
-        let maybe: MaybeLocked = Self::current_account()?;
-        let account = maybe.unlocked()?;
+    fn genesis_block() -> Block {
         let genesis_header = BlockHeader {
             prevhash: vec![0u8; 32],
             timestamp: timestamp(),
@@ -137,31 +83,137 @@ impl LocalBehaviour for BlockContext {
             transactions_root: vec![0u8; 32],
             proposer: vec![0u8; 32],
         };
+        Block {
+            version: 0,
+            header: Some(genesis_header),
+            body: Some(RawTransactions { body: Vec::new() }),
+            proof: vec![],
+            state_root: vec![],
+        }
+    }
 
-        let res = local_executor()
-            .exec(Block {
-                version: 0,
-                header: Some(genesis_header.clone()),
-                body: Some(RawTransactions { body: Vec::new() }),
-                proof: vec![],
-                state_root: vec![],
-            })
-            .await?;
+    pub fn increase_batch_number() -> Result<u64> {
+        Ok(incr_one(current_batch_number())?)
+    }
+    pub fn set_fake_block_hash(hash: Vec<u8>) -> Result<String> {
+        Ok(set(current_fake_block_hash(), hash)?)
+    }
+
+    pub fn step_next(block_hash: Vec<u8>) -> Result<()> {
+        Self::increase_batch_number()?;
+        Self::set_fake_block_hash(block_hash)?;
+        Ok(())
+    }
+
+    pub fn change_role(is_master: bool) -> Result<()> {
+        let key = rollup_write_enable();
+        match is_master {
+            true => {
+                set(key, 1)?;
+                Ok(())
+            }
+            false => {
+                set(key, 0)?;
+                Ok(())
+            }
+        }
+    }
+
+    pub fn is_master() -> Result<bool> {
+        let key = rollup_write_enable();
+        Ok(exists(key.clone())? && get::<u64>(key)? == 1)
+    }
+
+    fn is_restart() -> Result<bool> {
+        Ok(exists(rollup_write_enable())?)
+    }
+}
+
+#[tonic::async_trait]
+impl LocalBehaviour for BlockContext {
+    async fn set_up(expire_time: usize, crypto_type: CryptoType, is_master: bool) -> Result<()> {
+        Self::timing_update(expire_time).await?;
+        Self::create_admin_account(crypto_type)?;
+        if !Self::is_restart()? {
+            Self::change_role(is_master)?;
+        }
+        Ok(())
+    }
+
+    async fn timing_update(expire_time: usize) -> Result<()> {
+        CacheManager::set_ex(
+            cita_cloud_block_number_key(),
+            controller().get_block_number(false).await?,
+            expire_time * 2,
+        )?;
+        let sys_config = controller().get_system_config().await?;
+        let mut sys_config_bytes = Vec::with_capacity(sys_config.encoded_len());
+        sys_config
+            .encode(&mut sys_config_bytes)
+            .expect("encode system config failed");
+        CacheManager::set_ex(system_config_key(), sys_config_bytes, expire_time * 2)?;
+        Ok(())
+    }
+
+    async fn get_batch_number() -> Result<u64> {
+        let key = current_batch_number();
+        if exists(key.clone())? {
+            Ok(get::<u64>(key.clone())?)
+        } else {
+            Self::commit_genesis_block().await?;
+            Ok(get::<u64>(key.clone())?)
+        }
+    }
+
+    async fn get_fake_block_hash() -> Result<Vec<u8>> {
+        let key = current_fake_block_hash();
+        if exists(key.clone())? {
+            Ok(get(key.clone())?)
+        } else {
+            Self::commit_genesis_block().await?;
+            Ok(get(key.clone())?)
+        }
+    }
+
+    async fn fake_block(proposer: Vec<u8>, tx_list: Vec<RawTransaction>) -> Result<Block> {
+        let header = BlockHeader {
+            prevhash: Self::get_fake_block_hash().await?,
+            timestamp: unix_now(),
+            height: Self::get_batch_number().await?,
+            transactions_root: vec![0u8; 32],
+            proposer,
+        };
+
+        Ok(Block {
+            version: 0,
+            header: Some(header),
+            body: Some(RawTransactions { body: tx_list }),
+            proof: Vec::new(),
+            state_root: Vec::new(),
+        })
+    }
+
+    async fn commit_genesis_block() -> Result<()> {
+        let maybe: MaybeLocked = Self::current_account()?;
+        let account = maybe.unlocked()?;
+        let block = Self::genesis_block();
+        let res = local_executor().exec(block.clone()).await?;
         if let Some(status) = res.status {
             if status.code == 0 {
+                let genesis_header = block.header.expect("get genesis header failed!");
                 let mut block_header_bytes = Vec::with_capacity(genesis_header.encoded_len());
                 genesis_header
                     .encode(&mut block_header_bytes)
                     .expect("encode block header failed");
                 let block_hash = account.hash(block_header_bytes.as_slice());
-                let hash_str = hex(block_hash.as_slice());
-                println!("current block hash: {}", hash_str);
-
-                Self::increase_block_height()?;
-                Self::set_current_block_hash(hash_str)?;
+                info!("current block hash: {}", hex(block_hash.as_slice()));
+                Self::step_next(block_hash)?;
                 Ok(())
             } else {
-                Err(anyhow!("execute local block failed!"))
+                Err(anyhow!(
+                    "execute local genesis block failed, status code: {:?}",
+                    status
+                ))
             }
         } else {
             Err(anyhow!("commit genesis block failed!"))

@@ -42,11 +42,7 @@ pub fn get<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     con().get(key)
 }
 
-pub fn get_num(key: String) -> Result<u64, r2d2_redis::redis::RedisError> {
-    con().get(key)
-}
-
-pub fn incr(key: String) -> Result<u64, r2d2_redis::redis::RedisError> {
+pub fn incr_one(key: String) -> Result<u64, r2d2_redis::redis::RedisError> {
     con().incr::<String, u64, u64>(key, 1)
 }
 
@@ -61,6 +57,14 @@ pub fn expire(key: String, expire_time: usize) -> Result<u64, r2d2_redis::redis:
 #[allow(dead_code)]
 pub fn exists(key: String) -> Result<bool, r2d2_redis::redis::RedisError> {
     con().exists(key)
+}
+
+#[allow(dead_code)]
+pub fn set_nx<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+    key: String,
+    val: T,
+) -> Result<u64, r2d2_redis::redis::RedisError> {
+    con().set_nx(key, val)
 }
 
 #[allow(dead_code)]

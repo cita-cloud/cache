@@ -1,0 +1,54 @@
+version: "2"
+
+services:
+  cache:
+    #找到当前目录下mysql构建镜像
+    build: ../
+    #镜像名称
+    image: cache:test
+    #项目名称
+    container_name: master-cache
+    #端口映射
+    ports:
+      - "8888:8000"
+      #将mysql目录映射到本地 应根据自己所需要映射的目录进行修改
+    volumes:
+      - ../Cache.toml:/etc/cita-cloud/config/Cache.toml
+    command: cache
+    environment:
+      ROCKET_CONFIG: /etc/cita-cloud/config/Cache.toml
+      ROCKET_MAX_BLOCKING: 2048
+      ROCKET_ACCOUNT: 757ca1c731a3d7e9bdbd0e22ee65918674a77bd7
+      ROCKET_PROFILE: local
+    depends_on:
+      - redis
+      - executor
+    links:
+      - redis:master-redis
+      - executor:master-executor
+  redis:
+    image: redis:latest
+    restart: "always"
+    container_name: master-redis
+    ports:
+      - "6377:6379"
+    volumes:
+      - ./redis/redis.conf:/etc/redis/redis.conf
+      - ./redis/volume/data:/data
+      - ./redis/volume/logs:/logs
+    command: redis-server /etc/redis/redis.conf
+    privileged: true
+
+  executor:
+    #镜像名称
+    image: citacloud/executor_evm:v6.6.3
+    container_name: master-executor
+    restart: always
+    ports:
+      - 55557:55556
+    volumes:
+      - ./executor/config.toml:/config.toml
+      - ./executor/executor-log4rs.yaml:/executor-log4rs.yaml
+      - ./executor/data:/data
+      - ./executor/logs:/logs
+    command: executor run -c /config.toml -l /executor-log4rs.yaml

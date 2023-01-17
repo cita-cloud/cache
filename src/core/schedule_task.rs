@@ -12,13 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::cita_cloud::controller::ControllerBehaviour;
-use crate::cita_cloud::wallet::{Account, MaybeLocked, MultiCryptoAccount};
-use crate::common::constant::{controller, ADMIN_ACCOUNT, BLOCK_NUMBER, SYSTEM_CONFIG};
-use crate::common::crypto::Crypto;
-use crate::core::key_manager::{key_without_param, CacheBehavior, CacheManager, PackBehavior};
+use crate::common::context::BlockContext;
+use crate::core::key_manager::{CacheBehavior, CacheManager, PackBehavior, ValidatorBehavior};
+use crate::LocalBehaviour;
 use anyhow::Result;
-use prost::Message;
 use tokio::time;
 
 #[tonic::async_trait]
@@ -27,12 +24,21 @@ pub trait ScheduleTask {
 
     fn name() -> String;
 
+    fn enable() -> Result<bool>;
+
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
-        let mut internal = time::interval(time::Duration::from_secs(time_internal));
+        let mut internal = time::interval(time::Duration::from_millis(time_internal));
         loop {
-            internal.tick().await;
-            if let Err(e) = Self::task(timing_batch, expire_time).await {
-                warn!("[{} task] error: {}", Self::name(), e);
+            match Self::enable() {
+                Ok(flag) => {
+                    if flag {
+                        internal.tick().await;
+                        if let Err(e) = Self::task(timing_batch, expire_time).await {
+                            warn!("[{} task] error: {}", Self::name(), e);
+                        }
+                    }
+                }
+                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
             }
         }
     }
@@ -49,6 +55,10 @@ impl ScheduleTask for CommitTxTask {
     fn name() -> String {
         "commit tx".to_string()
     }
+
+    fn enable() -> Result<bool> {
+        BlockContext::is_master()
+    }
 }
 
 pub struct PackTxTask;
@@ -60,7 +70,11 @@ impl ScheduleTask for PackTxTask {
     }
 
     fn name() -> String {
-        "commit tx".to_string()
+        "pack tx".to_string()
+    }
+
+    fn enable() -> Result<bool> {
+        BlockContext::is_master()
     }
 }
 
@@ -75,6 +89,10 @@ impl ScheduleTask for CheckTxTask {
     fn name() -> String {
         "check tx".to_string()
     }
+
+    fn enable() -> Result<bool> {
+        BlockContext::is_master()
+    }
 }
 
 pub struct LazyEvictExpiredKeyTask;
@@ -87,6 +105,10 @@ impl ScheduleTask for LazyEvictExpiredKeyTask {
 
     fn name() -> String {
         "lazy evict expired key".to_string()
+    }
+
+    fn enable() -> Result<bool> {
+        Ok(true)
     }
 }
 
@@ -101,47 +123,59 @@ impl ScheduleTask for EvictExpiredKeyTask {
     fn name() -> String {
         "evict expired key".to_string()
     }
+
+    fn enable() -> Result<bool> {
+        Ok(true)
+    }
 }
 
-pub struct UsefulParamTask<C: Crypto> {
-    #[allow(dead_code)]
-    public_key: C::PublicKey,
-}
+pub struct UsefulParamTask;
 
 #[tonic::async_trait]
-impl<C: Crypto> ScheduleTask for UsefulParamTask<C>
-where
-    MultiCryptoAccount: From<Account<C>>,
-{
+impl ScheduleTask for UsefulParamTask {
     async fn task(_: isize, expire_time: usize) -> Result<()> {
-        CacheManager::set_ex(
-            key_without_param(BLOCK_NUMBER.to_string()),
-            controller().get_block_number(false).await?,
-            expire_time * 2,
-        )?;
-        let sys_config = controller().get_system_config().await?;
-        let mut sys_config_bytes = Vec::with_capacity(sys_config.encoded_len());
-        sys_config
-            .encode(&mut sys_config_bytes)
-            .expect("encode system config failed");
-        CacheManager::set_ex(
-            key_without_param(SYSTEM_CONFIG.to_string()),
-            sys_config_bytes,
-            expire_time * 2,
-        )?;
-        let account: MultiCryptoAccount = Account::<C>::generate().into();
-        let maybe_locked: MaybeLocked = account.into();
-        let account_str = toml::to_string_pretty(&maybe_locked)?;
-        CacheManager::set_ex(
-            key_without_param(ADMIN_ACCOUNT.to_string()),
-            account_str,
-            expire_time * 2,
-        )?;
-
-        Ok(())
+        BlockContext::timing_update(expire_time).await
     }
 
     fn name() -> String {
         "useful param task".to_string()
+    }
+
+    fn enable() -> Result<bool> {
+        Ok(true)
+    }
+}
+
+pub struct PollTxsTask;
+
+#[tonic::async_trait]
+impl ScheduleTask for PollTxsTask {
+    async fn task(timing_batch: isize, expire_time: usize) -> Result<()> {
+        CacheManager::poll(timing_batch, expire_time).await
+    }
+
+    fn name() -> String {
+        "poll txs".to_string()
+    }
+
+    fn enable() -> Result<bool> {
+        Ok(!BlockContext::is_master()?)
+    }
+}
+
+pub struct ReplayTask;
+
+#[tonic::async_trait]
+impl ScheduleTask for ReplayTask {
+    async fn task(timing_batch: isize, expire_time: usize) -> Result<()> {
+        CacheManager::replay(timing_batch, expire_time).await
+    }
+
+    fn name() -> String {
+        "replay txs".to_string()
+    }
+
+    fn enable() -> Result<bool> {
+        Ok(!BlockContext::is_master()?)
     }
 }

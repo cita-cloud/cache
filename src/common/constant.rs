@@ -27,9 +27,15 @@ pub const SET_TYPE: &str = "set";
 pub const ZSET_TYPE: &str = "zset";
 pub const VAL_TYPE: &str = "val";
 
-pub const BLOCK_NUMBER: &str = "block_number";
-pub const CURRENT_BLOCK_NUMBER: &str = "current_block_number";
-pub const CURRENT_BLOCK_HASH: &str = "current_block_hash";
+pub const ROLLUP_WRITE_ENABLE: &str = "rollup_write_enable";
+
+pub const CITA_CLOUD_BLOCK_NUMBER: &str = "cita_cloud_block_number";
+pub const CURRENT_BATCH_NUMBER: &str = "current_batch_number";
+pub const VALIDATOR_BATCH_NUMBER: &str = "validator_batch_number";
+pub const CURRENT_FAKE_BLOCK_HASH: &str = "current_fake_block_hash";
+
+pub const VALIDATE_TX_BUFFER: &str = "validate_tx_hash";
+
 pub const SYSTEM_CONFIG: &str = "system_config";
 pub const ADMIN_ACCOUNT: &str = "admin_account";
 pub const UNCOMMITTED_TX: &str = "uncommitted_tx_hash";

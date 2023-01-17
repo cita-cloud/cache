@@ -33,6 +33,7 @@ pub struct Account<C: Crypto> {
 }
 
 impl<C: Crypto> Account<C> {
+    #[allow(dead_code)]
     pub fn generate() -> Self {
         let (public_key, secret_key) = C::generate_keypair();
         let address = C::pk2addr(&public_key);
@@ -563,5 +564,19 @@ impl SignerBehaviour for MultiCryptoAccount {
             Self::Sm(ac) => <Account<SmCrypto> as SignerBehaviour>::sign(ac, msg),
             Self::Eth(ac) => <Account<EthCrypto> as SignerBehaviour>::sign(ac, msg),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::cita_cloud::wallet::{Account, MaybeLocked, MultiCryptoAccount};
+    use crate::common::crypto::EthCrypto;
+
+    #[test]
+    fn test_generate() {
+        let account: MultiCryptoAccount = Account::<EthCrypto>::generate().into();
+        let maybe_locked: MaybeLocked = account.into();
+        let account_str = toml::to_string_pretty(&maybe_locked).unwrap();
+        println!("{}", account_str);
     }
 }
