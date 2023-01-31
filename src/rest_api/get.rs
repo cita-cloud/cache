@@ -16,7 +16,7 @@ extern crate rocket;
 
 use crate::cita_cloud::controller::ControllerBehaviour;
 use crate::cita_cloud::evm::EvmBehaviour;
-use crate::common::constant::BLOCK_NUMBER;
+use crate::common::constant::CITA_CLOUD_BLOCK_NUMBER;
 use crate::common::display::Display;
 use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
 use crate::core::context::Context;
@@ -34,11 +34,8 @@ use serde_json::{json, Value};
 pub async fn block_number(
     _ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    match get(key_without_param(BLOCK_NUMBER.to_string())) {
-        Ok(bn_str) => match bn_str.parse::<u64>() {
-            Ok(bn) => Json(success(json!(bn))),
-            Err(e) => Json(failure(anyhow!(e))),
-        },
+    match get::<u64>(key_without_param(CITA_CLOUD_BLOCK_NUMBER.to_string())) {
+        Ok(bn) => Json(success(json!(bn))),
         Err(e) => Json(failure(anyhow!(e))),
     }
 }

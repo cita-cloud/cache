@@ -3,7 +3,7 @@ version: "2"
 services:
   cache:
     #找到当前目录下mysql构建镜像
-    build: ../
+    build: ../../
     #镜像名称
     image: cache:test
     #项目名称
@@ -13,13 +13,12 @@ services:
       - "8888:8000"
       #将mysql目录映射到本地 应根据自己所需要映射的目录进行修改
     volumes:
-      - ../Cache.toml:/etc/cita-cloud/config/Cache.toml
+      - ../../Cache.toml:/etc/cita-cloud/config/Cache.toml
     command: cache
     environment:
       ROCKET_CONFIG: /etc/cita-cloud/config/Cache.toml
       ROCKET_MAX_BLOCKING: 2048
-      ROCKET_ACCOUNT: 757ca1c731a3d7e9bdbd0e22ee65918674a77bd7
-      ROCKET_PROFILE: local
+      ROCKET_PROFILE: local_master
     depends_on:
       - redis
       - executor

@@ -16,7 +16,6 @@ use crate::common::context::BlockContext;
 use crate::core::key_manager::{CacheBehavior, CacheManager, PackBehavior, ValidatorBehavior};
 use crate::LocalBehaviour;
 use anyhow::Result;
-use std::cmp;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
 
@@ -127,7 +126,6 @@ impl ScheduleTask for EvictExpiredKeyTask {
         "evict expired key".to_string()
     }
 
-
     fn enable() -> Result<bool> {
         Ok(true)
     }
@@ -139,34 +137,6 @@ pub struct UsefulParamTask;
 impl ScheduleTask for UsefulParamTask {
     async fn task(_: isize, expire_time: usize) -> Result<()> {
         BlockContext::timing_update(expire_time).await
-        let key = key_without_param(BLOCK_NUMBER.to_string());
-        CacheManager::set_ex(
-            key.clone(),
-            cmp::max(
-                controller().get_block_number(false).await?,
-                if exists(key.clone())? {
-                    get(key)?.parse::<u64>()?
-                } else {
-                    0
-                },
-            ),
-            expire_time * 2,
-        )?;
-        CacheManager::set_ex(
-            key_without_param(SYSTEM_CONFIG.to_string()),
-            controller().get_system_config().await?.display(),
-            expire_time * 2,
-        )?;
-        let account: MultiCryptoAccount = Account::<C>::generate().into();
-        let maybe_locked: MaybeLocked = account.into();
-        let account_str = toml::to_string_pretty(&maybe_locked)?;
-        CacheManager::set_ex(
-            key_without_param(ADMIN_ACCOUNT.to_string()),
-            account_str,
-            expire_time * 2,
-        )?;
-
-        Ok(())
     }
 
     fn name() -> String {

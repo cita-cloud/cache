@@ -851,7 +851,10 @@ impl CacheBehavior for CacheManager {
     }
 
     async fn set_up() -> Result<()> {
-        for item in [BLOCK_NUMBER.to_string(), SYSTEM_CONFIG.to_string()] {
+        for item in [
+            CITA_CLOUD_BLOCK_NUMBER.to_string(),
+            SYSTEM_CONFIG.to_string(),
+        ] {
             let member = key_without_param(item);
             delete(member.clone())?;
             if Self::clean_up_expired_by_key(member.clone()).is_ok() {

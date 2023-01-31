@@ -7,10 +7,10 @@ services:
     #镜像名称
     image: cache:test
     #项目名称
-    container_name: master-cache
+    container_name: validator-cache
     #端口映射
     ports:
-      - "8888:8000"
+      - "8889:8000"
       #将mysql目录映射到本地 应根据自己所需要映射的目录进行修改
     volumes:
       - ../../Cache.toml:/etc/cita-cloud/config/Cache.toml
@@ -18,19 +18,19 @@ services:
     environment:
       ROCKET_CONFIG: /etc/cita-cloud/config/Cache.toml
       ROCKET_MAX_BLOCKING: 2048
-      ROCKET_PROFILE: local_master
+      ROCKET_PROFILE: local_validator
     depends_on:
       - redis
       - executor
     links:
-      - redis:master-redis
-      - executor:master-executor
+      - redis:validator-redis
+      - executor:validator-executor
   redis:
     image: redis:latest
     restart: "always"
-    container_name: master-redis
+    container_name: validator-redis
     ports:
-      - "6377:6379"
+      - "6378:6379"
     volumes:
       - ./redis/redis.conf:/etc/redis/redis.conf
       - ./redis/volume/data:/data
@@ -41,10 +41,10 @@ services:
   executor:
     #镜像名称
     image: citacloud/executor_evm:v6.6.3
-    container_name: master-executor
+    container_name: validator-executor
     restart: always
     ports:
-      - 55557:55556
+      - 55558:55556
     volumes:
       - ./executor/config.toml:/config.toml
       - ./executor/executor-log4rs.yaml:/executor-log4rs.yaml
