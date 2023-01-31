@@ -851,6 +851,13 @@ impl CacheBehavior for CacheManager {
     }
 
     async fn set_up() -> Result<()> {
+        for item in [BLOCK_NUMBER.to_string(), SYSTEM_CONFIG.to_string()] {
+            let member = key_without_param(item);
+            delete(member.clone())?;
+            if Self::clean_up_expired_by_key(member.clone()).is_ok() {
+                info!("set up -> reset key: {} success", member);
+            }
+        }
         let current = current_rough_time();
         for key in keys::<String>(clean_up_pattern())? {
             let rough_time_str: &str = &key[clean_up_prefix().len()..];
