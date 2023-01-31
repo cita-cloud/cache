@@ -237,7 +237,11 @@ async fn main() {
     let seconds = timing_internal_sec * 1000;
     tokio::spawn(CommitTxTask::schedule(seconds, timing_batch, expire_time));
     tokio::spawn(PackTxTask::schedule(seconds, timing_batch, expire_time));
-    tokio::spawn(CheckTxTask::schedule(seconds, timing_batch, expire_time));
+    tokio::spawn(CheckTxTask::schedule(
+        2 * seconds,
+        timing_batch,
+        expire_time,
+    ));
     tokio::spawn(EvictExpiredKeyTask::schedule(
         seconds * 10,
         timing_batch,

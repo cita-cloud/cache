@@ -17,12 +17,12 @@ use crate::common::constant::{
     controller, evm, local_executor, rough_internal, ADMIN_ACCOUNT, CITA_CLOUD_BLOCK_NUMBER,
     COMMITTED_TX, CONTRACT_KEY, CURRENT_BATCH_NUMBER, CURRENT_FAKE_BLOCK_HASH, EVICT_TO_ROUGH_TIME,
     EXPIRED_KEY_EVENT_AT_ALL_DB, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE, KEY_PREFIX,
-    LAZY_EVICT_TO_TIME, ONE_THOUSAND, PACK_UNCOMMITTED_TX, ROLLUP_WRITE_ENABLE, SET_TYPE,
-    SYSTEM_CONFIG, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VALIDATE_TX_BUFFER, VALIDATOR_BATCH_NUMBER,
-    VAL_TYPE, ZSET_TYPE,
+    LAZY_EVICT_TO_TIME, ONE_THOUSAND, PACKAGED_TX, PACK_UNCOMMITTED_TX, ROLLUP_WRITE_ENABLE,
+    SET_TYPE, SYSTEM_CONFIG, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VALIDATE_TX_BUFFER,
+    VALIDATOR_BATCH_NUMBER, VAL_TYPE, ZSET_TYPE,
 };
-use crate::common::util::{hex_without_0x, parse_data, timestamp};
-use crate::redis::{hexists, sadd, smove, ttl};
+use crate::common::util::{hex_without_0x, parse_hash, timestamp};
+use crate::redis::{hexists, sadd, sismember, smove, ttl};
 use crate::{
     delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
@@ -35,12 +35,11 @@ use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
 use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::package::Package;
-use crate::common::util::hex;
 use crate::rest_api::post::ToTx;
 use msgpack_schema::deserialize;
 use prost::Message;
 use r2d2_redis::redis::{ControlFlow, FromRedisValue, ToRedisArgs};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::future::Future;
 
 fn uncommitted_tx_key() -> String {
@@ -73,6 +72,10 @@ fn clean_up_key(time: u64) -> String {
 
 fn clean_up_prefix() -> String {
     format!("{}:{}:{}:", KEY_PREFIX, SET_TYPE, TIME_TO_CLEAN_UP)
+}
+
+fn packaged_tx() -> String {
+    format!("{}:{}:{}:", KEY_PREFIX, SET_TYPE, PACKAGED_TX)
 }
 
 fn lazy_evict_to_time() -> String {
@@ -202,11 +205,14 @@ pub trait TxBehavior {
 #[tonic::async_trait]
 pub trait ContractBehavior {
     fn try_clean_contract_data(tx_hash: String) -> Result<()>;
+    fn try_clean_contract(raw_tx: RawTransaction) -> Result<()>;
 }
 
 #[tonic::async_trait]
 pub trait PackBehavior {
     async fn package(timing_batch: isize, expire_time: usize) -> Result<()>;
+    fn is_packaged_tx(hash: String) -> Result<bool>;
+    fn tag_tx(hash: String) -> Result<()>;
 }
 
 #[tonic::async_trait]
@@ -229,6 +235,16 @@ pub trait CacheBehavior:
         need_package: bool,
     ) -> Result<()>;
     async fn load_or_query<F, T>(key: String, expire_time: usize, f: F) -> Result<Value>
+    where
+        T: Display,
+        F: Send + Future<Output = Result<T>>;
+
+    async fn load_or_query_obj<F, T>(
+        key: String,
+        expire_time: usize,
+        f: F,
+        is_obj: bool,
+    ) -> Result<Value>
     where
         T: Display,
         F: Send + Future<Output = Result<T>>;
@@ -371,7 +387,8 @@ impl TxBehavior for CacheManager {
         zrem(committed_tx_key(), tx_hash.clone())?;
         zrem(uncommitted_tx_key(), tx_hash.clone())?;
         hdel(hash_to_tx(), tx_hash.clone())?;
-        hdel(hash_to_block_number(), tx_hash)?;
+        hdel(hash_to_block_number(), tx_hash.clone())?;
+        srem(packaged_tx(), tx_hash)?;
         Ok(())
     }
 }
@@ -401,7 +418,12 @@ impl ContractBehavior for CacheManager {
     fn try_clean_contract_data(tx_hash: String) -> Result<()> {
         let tx = Self::original_tx(tx_hash)?;
         let decoded: RawTransaction = Message::decode(tx.as_slice())?;
-        if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
+        Self::try_clean_contract(decoded)?;
+        Ok(())
+    }
+
+    fn try_clean_contract(raw_tx: RawTransaction) -> Result<()> {
+        if let Some(Tx::NormalTx(normal_tx)) = raw_tx.tx {
             if let Some(transaction) = normal_tx.transaction {
                 let addr = hex_without_0x(&transaction.to);
                 if let Ok(keys) = keys::<String>(contract_pattern(addr)) {
@@ -417,7 +439,7 @@ impl ContractBehavior for CacheManager {
 
 #[tonic::async_trait]
 impl PackBehavior for CacheManager {
-    async fn package(timing_batch: isize, expire_time: usize) -> Result<()> {
+    async fn package(timing_batch: isize, _expire_time: usize) -> Result<()> {
         let members = CacheManager::pack_uncommitted_txs(timing_batch)?;
         if members.is_empty() {
             return Ok(());
@@ -425,14 +447,7 @@ impl PackBehavior for CacheManager {
         let mut tx_list = Vec::new();
         let mut hash_list = Vec::new();
         for (tx_hash, _score) in members {
-            let tx = match Self::original_tx(tx_hash.clone()) {
-                Ok(tx) => tx,
-                Err(e) => {
-                    Self::save_error(tx_hash.clone(), format!("{}", e), expire_time * 5)?;
-                    Self::clean_up_tx(tx_hash.clone())?;
-                    continue;
-                }
-            };
+            let tx = Self::original_tx(tx_hash.clone())?;
             let decoded: RawTransaction = Message::decode(tx.as_slice())?;
             tx_list.push(decoded);
             hash_list.push(tx_hash);
@@ -441,29 +456,35 @@ impl PackBehavior for CacheManager {
         let maybe: MaybeLocked = BlockContext::current_account()?;
         let account = maybe.unlocked()?;
         let proposer = account.address().to_vec();
-        let block = BlockContext::fake_block(proposer, tx_list).await?;
+        let block = BlockContext::fake_block(proposer, tx_list.clone()).await?;
 
         if let Ok(res) = local_executor().exec(block.clone()).await {
             if let Some(status) = res.status {
                 if status.code == 0 {
-                    let packaged_tx = Package::new(batch_number, block.clone())
-                        .to_packaged_tx(*account.address())?;
-                    controller()
-                        .send_raw_tx(account, packaged_tx.to(account, evm()).await?, false)
-                        .await?;
-                    info!("package batch: {}.", batch_number);
+                    for raw_tx in tx_list {
+                        Self::try_clean_contract(raw_tx)?;
+                    }
 
-                    let header = block.header.expect("get block header failed");
-                    let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
-                    header
-                        .encode(&mut block_header_bytes)
-                        .expect("encode block header failed");
-                    let block_hash = account.hash(block_header_bytes.as_slice());
+                    let packaged_tx_obj = Package::new(batch_number, block.clone())
+                        .to_packaged_tx(*account.address())?;
+                    let hash = controller()
+                        .send_raw_tx(account, packaged_tx_obj.to(account, evm()).await?, false)
+                        .await?;
                     Self::clean_up_packaged_txs(hash_list)?;
-                    BlockContext::step_next(block_hash)?;
+                    Self::tag_tx(hex_without_0x(hash.as_slice()))?;
+                    info!("package batch: {}.", batch_number);
                 }
             }
         }
+        Ok(())
+    }
+
+    fn is_packaged_tx(hash: String) -> Result<bool> {
+        Ok(sismember(packaged_tx(), hash)?)
+    }
+
+    fn tag_tx(hash: String) -> Result<()> {
+        sadd(packaged_tx(), hash)?;
         Ok(())
     }
 }
@@ -525,7 +546,7 @@ impl ValidatorBehavior for CacheManager {
                     let decoded_package = deserialize::<Package>(package_data.clone().as_slice())?;
                     let batch_number = decoded_package.batch_number;
                     info!("poll batch: {}!", batch_number);
-                    let hash_str = hex(normal_tx.transaction_hash.as_slice());
+                    let hash_str = hex_without_0x(normal_tx.transaction_hash.as_slice());
                     Self::enqueue_to_buffer(hash_str, package_data, batch_number)?;
                 }
             }
@@ -541,16 +562,17 @@ impl ValidatorBehavior for CacheManager {
                 let maybe = BlockContext::current_account()?;
                 let account = maybe.unlocked()?;
 
-                let raw = hget::<Vec<u8>>(hash_to_tx(), member.clone())?;
+                let raw = Self::original_tx(member.clone())?;
                 let decoded_package = deserialize::<Package>(raw.as_slice())?;
                 let block: Block = Message::decode(decoded_package.block.as_slice())?;
+
                 let mut header = block.header.expect("get block header failed");
                 header.prevhash = BlockContext::get_fake_block_hash().await?;
                 if let Ok(res) = local_executor()
                     .exec(Block {
                         version: 0,
                         header: Some(header.clone()),
-                        body: block.body,
+                        body: block.body.clone(),
                         proof: Vec::new(),
                         state_root: Vec::new(),
                     })
@@ -558,6 +580,9 @@ impl ValidatorBehavior for CacheManager {
                 {
                     if let Some(status) = res.status {
                         if status.code == 0 {
+                            for raw_tx in block.body.expect("get block body failed").body {
+                                Self::try_clean_contract(raw_tx)?;
+                            }
                             let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
                             header
                                 .encode(&mut block_header_bytes)
@@ -590,12 +615,31 @@ impl CacheBehavior for CacheManager {
         T: Display,
         F: Send + Future<Output = Result<T>>,
     {
+        Self::load_or_query_obj(key, expire_time, f, false).await
+    }
+
+    async fn load_or_query_obj<F, T>(
+        key: String,
+        expire_time: usize,
+        f: F,
+        is_obj: bool,
+    ) -> Result<Value>
+    where
+        T: Display,
+        F: Send + Future<Output = Result<T>>,
+    {
         if Self::exist_val(key.clone())? {
             let result = Self::load_val(key, expire_time)?;
-            if let Ok(json) = serde_json::from_str(result.as_str()) {
-                Ok(json)
-            } else {
-                Err(anyhow!(result))
+            let content = result.as_str();
+            match serde_json::from_str(content) {
+                Ok(json) => Ok(json),
+                Err(e) => {
+                    if is_obj {
+                        Err(anyhow!(e))
+                    } else {
+                        Ok(json!(content))
+                    }
+                }
             }
         } else {
             let val: T = f.await?;
@@ -661,14 +705,7 @@ impl CacheBehavior for CacheManager {
     async fn commit(timing_batch: isize, expire_time: usize) -> Result<()> {
         let members = CacheManager::uncommitted_txs(timing_batch)?;
         for (tx_hash, score) in members {
-            let tx = match Self::original_tx(tx_hash.clone()) {
-                Ok(tx) => tx,
-                Err(e) => {
-                    Self::save_error(tx_hash.clone(), format!("{}", e), expire_time * 5)?;
-                    Self::clean_up_tx(tx_hash.clone())?;
-                    continue;
-                }
-            };
+            let tx = Self::original_tx(tx_hash.clone())?;
             let decoded: RawTransaction = Message::decode(tx.as_slice())?;
             match controller().send_raw(decoded.clone()).await {
                 Ok(data) => {
@@ -696,7 +733,7 @@ impl CacheBehavior for CacheManager {
     async fn check(timing_batch: isize, expire_time: usize) -> Result<()> {
         let members = CacheManager::committed_txs(timing_batch)?;
         for (tx_hash, _) in members {
-            let hash = Hash::try_from_slice(&parse_data(tx_hash.clone().as_str())?[..])?;
+            let hash = parse_hash(tx_hash.clone().as_str())?;
             let (receipt, expire_time, is_ok) = match evm().get_receipt(hash).await {
                 Ok(receipt) => {
                     info!("get tx receipt success, hash: {}", tx_hash.clone());
@@ -709,6 +746,26 @@ impl CacheBehavior for CacheManager {
             };
             CacheManager::save_receipt_content(tx_hash.clone(), receipt, expire_time)?;
             if is_ok {
+                if Self::is_packaged_tx(tx_hash.clone())? {
+                    let raw_tx = Self::original_tx(tx_hash.clone())?;
+                    let raw_tx: RawTransaction = Message::decode(raw_tx.as_slice())?;
+                    if let Some(Tx::NormalTx(normal_tx)) = raw_tx.tx {
+                        if let Some(transaction) = normal_tx.transaction {
+                            let package_data = deserialize::<Package>(transaction.data.as_slice())?;
+                            let block: Block = Message::decode(package_data.block.as_slice())?;
+
+                            let header = block.header.expect("get block header failed");
+                            let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
+                            header
+                                .encode(&mut block_header_bytes)
+                                .expect("encode block header failed");
+                            let maybe: MaybeLocked = BlockContext::current_account()?;
+                            let account = maybe.unlocked()?;
+                            let block_hash = account.hash(block_header_bytes.as_slice());
+                            BlockContext::step_next(block_hash)?;
+                        }
+                    }
+                }
                 let (tx, expire_time) = match controller().get_tx(hash).await {
                     Ok(tx) => {
                         info!("get tx success, hash: {}", tx_hash.clone());
@@ -719,15 +776,38 @@ impl CacheBehavior for CacheManager {
                         (format!("{}", e), expire_time * 5)
                     }
                 };
+
                 CacheManager::save_tx_content(tx_hash.clone(), tx, expire_time)?;
                 CacheManager::try_clean_contract_data(tx_hash.clone())?;
                 CacheManager::clean_up_tx(tx_hash.clone())?;
+
                 continue;
             }
             if check_if_timeout(tx_hash.clone()).await? {
-                warn!("retry -> get receipt, timeout hash: {}", tx_hash.clone());
-                CacheManager::save_error(tx_hash.clone(), "timeout".to_string(), expire_time * 5)?;
-                CacheManager::clean_up_tx(tx_hash)?
+                if Self::is_packaged_tx(tx_hash.clone())? {
+                    let tx = Self::original_tx(tx_hash.clone())?;
+                    let decoded: RawTransaction = Message::decode(tx.as_slice())?;
+                    if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
+                        let package_data =
+                            normal_tx.transaction.expect("get transaction failed!").data;
+                        let decoded_package = deserialize::<Package>(package_data.as_slice())?;
+                        let maybe: MaybeLocked = BlockContext::current_account()?;
+                        let account = maybe.unlocked()?;
+                        let new_package = decoded_package.to_packaged_tx(*account.address())?;
+                        controller()
+                            .send_raw_tx(account, new_package.to(account, evm()).await?, false)
+                            .await?;
+                        warn!("repackage batch: {}.", decoded_package.batch_number);
+                    }
+                } else {
+                    CacheManager::save_error(
+                        tx_hash.clone(),
+                        "timeout".to_string(),
+                        expire_time * 5,
+                    )?;
+                    CacheManager::clean_up_tx(tx_hash.clone())?;
+                    warn!("retry -> get receipt, timeout hash: {}", tx_hash);
+                }
             }
         }
         Ok(())

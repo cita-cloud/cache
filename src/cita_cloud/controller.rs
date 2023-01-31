@@ -34,6 +34,7 @@ use cita_cloud_proto::{
     controller::{BlockNumber, Flag, SystemConfig},
 };
 use tokio::sync::OnceCell;
+
 #[derive(Debug, Clone)]
 pub struct ControllerClient {
     retry_client: OnceCell<RetryClient<RpcServiceClient<InterceptedSvc>>>,
@@ -340,9 +341,7 @@ where
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
-
         CacheManager::enqueue(hex_without_0x(hash), buf, valid_until_block, need_package)?;
-
         Ok(Hash::try_from_slice(hash)?)
     }
 

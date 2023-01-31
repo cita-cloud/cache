@@ -197,10 +197,11 @@ pub async fn tx(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query(
+    match CacheManager::load_or_query_obj(
         key("tx".to_string(), hash.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.controller.get_tx(data),
+        true,
     )
     .await
     {
@@ -208,30 +209,6 @@ pub async fn tx(
         Err(e) => Json(failure(e)),
     }
 }
-
-// ///Get peers count
-// #[get("/get-peers-count")]
-// #[utoipa::path(get, path = "/api/get-peers-count")]
-// pub async fn peers_count(
-//     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-// ) -> Json<CacheResult<Value>> {
-//     match ctx.controller.get_peer_count().await {
-//         Ok(peer_count) => Json(success(json!(peer_count))),
-//         Err(e) => Json(failure(e)),
-//     }
-// }
-
-// ///Get peers info
-// #[get("/get-peers-info")]
-// #[utoipa::path(get, path = "/api/get-peers-info")]
-// pub async fn peers_info(
-//     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-// ) -> Json<CacheResult<Value>> {
-//     match ctx.controller.get_peers_info().await {
-//         Ok(peers_info) => Json(success(peers_info.to_json())),
-//         Err(e) => Json(failure(e)),
-//     }
-// }
 
 ///Get nonce by account address
 #[get("/get-account-nonce/<address>")]
@@ -285,10 +262,11 @@ pub async fn receipt(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query(
+    match CacheManager::load_or_query_obj(
         key("receipt".to_string(), hash.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.local_evm.get_receipt(data),
+        true,
     )
     .await
     {
@@ -317,10 +295,11 @@ pub async fn receipt_inner(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query(
+    match CacheManager::load_or_query_obj(
         key("receipt-inner".to_string(), hash.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.evm.get_receipt(data),
+        true,
     )
     .await
     {
@@ -328,18 +307,6 @@ pub async fn receipt_inner(
         Err(e) => Json(failure(e)),
     }
 }
-
-// ///Get chain version
-// #[get("/get-version")]
-// #[utoipa::path(get, path = "/api/get-version")]
-// pub async fn version(
-//     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-// ) -> Json<CacheResult<Value>> {
-//     match ctx.controller.get_version().await {
-//         Ok(version) => Json(success(json!(version))),
-//         Err(e) => Json(failure(e)),
-//     }
-// }
 
 ///Get system config
 #[get("/get-system-config")]

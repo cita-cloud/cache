@@ -286,9 +286,13 @@ pub async fn create(
     result: Json<CreateContract>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    match create_contract(ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
-        Ok(data) => Json(success(data.to_json())),
-        Err(e) => Json(failure(e)),
+    if let Ok(true) = BlockContext::is_master() {
+        match create_contract(ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
+            Ok(data) => Json(success(data.to_json())),
+            Err(e) => Json(failure(e)),
+        }
+    } else {
+        Json(failure(anyhow!("only master can do this!")))
     }
 }
 
@@ -313,9 +317,13 @@ pub async fn send_tx(
     result: Json<SendTx>,
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    match create_tx(ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
-        Ok(data) => Json(success(data.to_json())),
-        Err(e) => Json(failure(e)),
+    if let Ok(true) = BlockContext::is_master() {
+        match create_tx(ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
+            Ok(data) => Json(success(data.to_json())),
+            Err(e) => Json(failure(e)),
+        }
+    } else {
+        Json(failure(anyhow!("only master can do this!")))
     }
 }
 

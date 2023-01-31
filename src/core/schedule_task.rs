@@ -17,6 +17,7 @@ use crate::core::key_manager::{CacheBehavior, CacheManager, PackBehavior, Valida
 use crate::LocalBehaviour;
 use anyhow::Result;
 use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 #[tonic::async_trait]
 pub trait ScheduleTask {
@@ -28,6 +29,7 @@ pub trait ScheduleTask {
 
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
         let mut internal = time::interval(time::Duration::from_millis(time_internal));
+        internal.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             match Self::enable() {
                 Ok(flag) => {
