@@ -31,6 +31,7 @@ use cita_cloud_proto::{
 };
 use cloud_util::unix_now;
 use prost::Message;
+use std::cmp;
 
 #[tonic::async_trait]
 pub trait LocalBehaviour {
@@ -141,9 +142,13 @@ impl LocalBehaviour for BlockContext {
     }
 
     async fn timing_update(expire_time: usize) -> Result<()> {
+        let key = cita_cloud_block_number_key();
         CacheManager::set_ex(
             cita_cloud_block_number_key(),
-            controller().get_block_number(false).await?,
+            cmp::max(
+                controller().get_block_number(false).await?,
+                if exists(key.clone())? { get(key)? } else { 0 },
+            ),
             expire_time * 2,
         )?;
         let sys_config = controller().get_system_config().await?;
