@@ -798,6 +798,7 @@ impl CacheBehavior for CacheManager {
                             .send_raw_tx(account, new_package.to(account, evm()).await?, false)
                             .await?;
                         warn!("repackage batch: {}.", decoded_package.batch_number);
+                        hdel(hash_to_block_number(), tx_hash.clone())?;
                     }
                 } else {
                     CacheManager::save_error(

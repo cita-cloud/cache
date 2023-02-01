@@ -8,6 +8,14 @@ services:
     image: cache:test
     #项目名称
     container_name: validator-cache
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 200M
     #端口映射
     ports:
       - "8889:8000"
@@ -18,6 +26,7 @@ services:
     environment:
       ROCKET_CONFIG: /etc/cita-cloud/config/Cache.toml
       ROCKET_MAX_BLOCKING: 2048
+      ROCKET_WORKERS: 2048
       ROCKET_PROFILE: local_validator
     depends_on:
       - redis
@@ -29,6 +38,14 @@ services:
     image: redis:latest
     restart: "always"
     container_name: validator-redis
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 200M
     ports:
       - "6378:6379"
     volumes:
