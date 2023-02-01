@@ -51,7 +51,7 @@ pub fn failure(e: Error) -> CacheResult<Value> {
     CacheResult {
         status: FAILURE,
         data: None,
-        message: format!("{}", e),
+        message: format!("{e}"),
     }
 }
 

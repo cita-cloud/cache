@@ -182,25 +182,25 @@ async fn set_param(
         config.workers,
     );
     if let Err(e) = CONTROLLER_CLIENT.set(ctx.controller.clone()) {
-        panic!("store controller client error: {:?}", e);
+        panic!("store controller client error: {e:?}");
     }
     if let Err(e) = EXECUTOR_CLIENT.set(ctx.executor.clone()) {
-        panic!("store executor client error: {:?}", e);
+        panic!("store executor client error: {e:?}");
     }
     if let Err(e) = LOCAL_EXECUTOR_CLIENT.set(ctx.local_executor.clone()) {
-        panic!("store local executor client error: {:?}", e);
+        panic!("store local executor client error: {e:?}");
     }
     if let Err(e) = EVM_CLIENT.set(ctx.evm.clone()) {
-        panic!("store evm client error: {:?}", e);
+        panic!("store evm client error: {e:?}");
     }
     if let Err(e) = LOCAL_EVM_CLIENT.set(ctx.local_evm.clone()) {
-        panic!("store evm client error: {:?}", e);
+        panic!("store evm client error: {e:?}");
     }
     if let Err(e) = CRYPTO_CLIENT.set(ctx.crypto.clone()) {
-        panic!("store crypto client error: {:?}", e);
+        panic!("store crypto client error: {e:?}");
     }
     if let Err(e) = ROUGH_INTERNAL.set(config.rough_internal.unwrap_or_default()) {
-        panic!("set rough internal fail: {:?}", e)
+        panic!("set rough internal fail: {e:?}")
     }
     (
         ctx,
@@ -222,7 +222,7 @@ async fn main() {
         ));
     let config = figment.extract::<CacheConfig>().unwrap_or_default();
     if let Err(e) = set_cache_logger(LevelFilter::from(config.log_level)).await {
-        panic!("set cache logger failed: {}", e);
+        panic!("set cache logger failed: {e}");
     }
     info!("cache config: {}", config.display());
     let (ctx, timing_internal_sec, timing_batch, expire_time) = set_param(config.clone()).await;
