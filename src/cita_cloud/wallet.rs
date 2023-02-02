@@ -577,6 +577,6 @@ mod tests {
         let account: MultiCryptoAccount = Account::<EthCrypto>::generate().into();
         let maybe_locked: MaybeLocked = account.into();
         let account_str = toml::to_string_pretty(&maybe_locked).unwrap();
-        println!("{}", account_str);
+        println!("{account_str}");
     }
 }
