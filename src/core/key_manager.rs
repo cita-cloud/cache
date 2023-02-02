@@ -43,78 +43,78 @@ use serde_json::{json, Value};
 use std::future::Future;
 
 fn uncommitted_tx_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, UNCOMMITTED_TX)
+    format!("{KEY_PREFIX}:{ZSET_TYPE}:{UNCOMMITTED_TX}")
 }
 
 fn pack_uncommitted_tx_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, PACK_UNCOMMITTED_TX)
+    format!("{KEY_PREFIX}:{ZSET_TYPE}:{PACK_UNCOMMITTED_TX}")
 }
 
 fn committed_tx_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, COMMITTED_TX)
+    format!("{KEY_PREFIX}:{ZSET_TYPE}:{COMMITTED_TX}")
 }
 
 pub fn validate_tx_buffer() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, VALIDATE_TX_BUFFER)
+    format!("{KEY_PREFIX}:{ZSET_TYPE}:{VALIDATE_TX_BUFFER}")
 }
 
 pub fn hash_to_tx() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_TX)
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_TX}")
 }
 
 fn hash_to_block_number() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_BLOCK_NUMBER)
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_BLOCK_NUMBER}")
 }
 
 fn clean_up_key(time: u64) -> String {
-    format!("{}:{}:{}:{}", KEY_PREFIX, SET_TYPE, TIME_TO_CLEAN_UP, time)
+    format!("{KEY_PREFIX}:{SET_TYPE}:{TIME_TO_CLEAN_UP}:{time}")
 }
 
 fn clean_up_prefix() -> String {
-    format!("{}:{}:{}:", KEY_PREFIX, SET_TYPE, TIME_TO_CLEAN_UP)
+    format!("{KEY_PREFIX}:{SET_TYPE}:{TIME_TO_CLEAN_UP}:")
 }
 
 fn packaged_tx() -> String {
-    format!("{}:{}:{}:", KEY_PREFIX, SET_TYPE, PACKAGED_TX)
+    format!("{KEY_PREFIX}:{SET_TYPE}:{PACKAGED_TX}:")
 }
 
 fn lazy_evict_to_time() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, LAZY_EVICT_TO_TIME)
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{LAZY_EVICT_TO_TIME}")
 }
 
 fn evict_to_rough_time() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, EVICT_TO_ROUGH_TIME)
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{EVICT_TO_ROUGH_TIME}")
 }
 
 fn val_prefix() -> String {
-    format!("{}:{}", KEY_PREFIX, VAL_TYPE)
+    format!("{KEY_PREFIX}:{VAL_TYPE}")
 }
 
 pub fn current_batch_number() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, CURRENT_BATCH_NUMBER)
+    format!("{KEY_PREFIX}:{VAL_TYPE}:{CURRENT_BATCH_NUMBER}")
 }
 
 pub fn validator_batch_number() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, VALIDATOR_BATCH_NUMBER)
+    format!("{KEY_PREFIX}:{VAL_TYPE}:{VALIDATOR_BATCH_NUMBER}")
 }
 
 pub fn current_fake_block_hash() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, CURRENT_FAKE_BLOCK_HASH)
+    format!("{KEY_PREFIX}:{VAL_TYPE}:{CURRENT_FAKE_BLOCK_HASH}")
 }
 
 pub fn rollup_write_enable() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, ROLLUP_WRITE_ENABLE)
+    format!("{KEY_PREFIX}:{VAL_TYPE}:{ROLLUP_WRITE_ENABLE}")
 }
 pub fn cita_cloud_block_number_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, CITA_CLOUD_BLOCK_NUMBER)
+    format!("{KEY_PREFIX}:{VAL_TYPE}:{CITA_CLOUD_BLOCK_NUMBER}")
 }
 
 pub fn system_config_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, SYSTEM_CONFIG)
+    format!("{KEY_PREFIX}:{VAL_TYPE}:{SYSTEM_CONFIG}")
 }
 
 pub fn admin_account_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, VAL_TYPE, ADMIN_ACCOUNT)
+    format!("{KEY_PREFIX}:{VAL_TYPE}:{ADMIN_ACCOUNT}")
 }
 
 fn clean_up_pattern() -> String {
@@ -721,7 +721,7 @@ impl CacheBehavior for CacheManager {
                         empty.as_slice()
                     };
                     let hash = hex_without_0x(hash).to_string();
-                    Self::save_error(hash.clone(), format!("{}", e), expire_time * 5)?;
+                    Self::save_error(hash.clone(), format!("{e}"), expire_time * 5)?;
                     Self::clean_up_tx(hash.clone())?;
                     warn!("commit tx fail, hash: {}", hash);
                 }
@@ -741,7 +741,7 @@ impl CacheBehavior for CacheManager {
                 }
                 Err(e) => {
                     info!("retry -> get receipt, hash: {}", tx_hash.clone());
-                    (format!("{}", e), expire_time * 5, false)
+                    (format!("{e}"), expire_time * 5, false)
                 }
             };
             CacheManager::save_receipt_content(tx_hash.clone(), receipt, expire_time)?;
@@ -773,7 +773,7 @@ impl CacheBehavior for CacheManager {
                     }
                     Err(e) => {
                         info!("retry -> get tx, hash: {}", tx_hash.clone());
-                        (format!("{}", e), expire_time * 5)
+                        (format!("{e}"), expire_time * 5)
                     }
                 };
 
@@ -798,6 +798,7 @@ impl CacheBehavior for CacheManager {
                             .send_raw_tx(account, new_package.to(account, evm()).await?, false)
                             .await?;
                         warn!("repackage batch: {}.", decoded_package.batch_number);
+                        hdel(hash_to_block_number(), tx_hash.clone())?;
                     }
                 } else {
                     CacheManager::save_error(

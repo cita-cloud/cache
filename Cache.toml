@@ -40,7 +40,7 @@ local_executor_addr = "http://master-executor:55556"
 crypto_addr = "http://docker.for.mac.host.internal:50005"
 redis_addr = "redis://default:rivtower@master-redis:6379"
 timing_internal_sec = 1
-timing_batch = 100
+timing_batch = 5000
 log_level = "normal"
 is_master = true
 
@@ -54,7 +54,7 @@ local_executor_addr = "http://validator-executor:55556"
 crypto_addr = "http://docker.for.mac.host.internal:50005"
 redis_addr = "redis://default:rivtower@validator-redis:6379"
 timing_internal_sec = 1
-timing_batch = 100
+timing_batch = 5000
 log_level = "normal"
 is_master = false
 

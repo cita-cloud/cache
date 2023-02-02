@@ -192,22 +192,23 @@ impl Default for SendTx {
 impl ToTx for SendTx {
     async fn to(
         &self,
-        account: &MultiCryptoAccount,
-        evm: EvmClient,
+        _account: &MultiCryptoAccount,
+        _evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
         let current = BlockContext::current_cita_height()?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = parse_addr(self.to.clone().as_str())?;
         let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
-        let quota = self
-            .estimate_quota(
-                evm,
-                Address::try_from_slice(account.address())?,
-                to,
-                data.clone(),
-            )
-            .await?;
+        // let quota = self
+        //     .estimate_quota(
+        //         evm,
+        //         Address::try_from_slice(account.address())?,
+        //         to,
+        //         data.clone(),
+        //     )
+        //     .await?;
+        let quota = 300000;
 
         let system_config = BlockContext::system_config()?;
         let version = system_config.version;
