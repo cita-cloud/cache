@@ -338,7 +338,9 @@ async fn call_or_load(
         remove_0x(result.data.as_str()).to_string(),
         result.height.unwrap_or_default(),
     );
-    let from = parse_addr(config.account.as_str())?;
+    let maybe: MaybeLocked = BlockContext::current_account()?;
+    let account = maybe.unlocked()?;
+    let from = *account.address();
     let to = parse_addr(result.to.as_str())?;
     let data = parse_data(result.data.as_str())?;
     let height = result.height.unwrap_or_default();

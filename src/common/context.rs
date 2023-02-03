@@ -15,8 +15,9 @@
 use crate::cita_cloud::controller::{ControllerBehaviour, SignerBehaviour};
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
-use crate::common::constant::{controller, local_executor, ADMIN_ACCOUNT};
+use crate::common::constant::{config, controller, local_executor, ADMIN_ACCOUNT};
 use crate::common::util::{hex, timestamp};
+use crate::core::key_manager::PackBehavior;
 use crate::core::key_manager::{
     admin_account_key, cita_cloud_block_number_key, key_without_param, rollup_write_enable,
     system_config_key,
@@ -213,6 +214,8 @@ impl LocalBehaviour for BlockContext {
                 let block_hash = account.hash(block_header_bytes.as_slice());
                 info!("current block hash: {}", hex(block_hash.as_slice()));
                 Self::step_next(block_hash)?;
+                CacheManager::package(config().timing_batch.unwrap_or_default() as isize, 0)
+                    .await?;
                 Ok(())
             } else {
                 Err(anyhow!(

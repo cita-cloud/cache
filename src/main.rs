@@ -177,7 +177,7 @@ async fn set_param(
         config.controller_addr.unwrap_or_default(),
         config.executor_addr.unwrap_or_default(),
         config.local_executor_addr.unwrap_or_default(),
-        config.crypto_addr.unwrap_or_default(),
+        config.crypto_addr,
         config.redis_addr.unwrap_or_default(),
         config.workers,
     );
@@ -196,9 +196,12 @@ async fn set_param(
     if let Err(e) = LOCAL_EVM_CLIENT.set(ctx.local_evm.clone()) {
         panic!("store evm client error: {e:?}");
     }
-    if let Err(e) = CRYPTO_CLIENT.set(ctx.crypto.clone()) {
-        panic!("store crypto client error: {e:?}");
+    if let Some(crypto) = ctx.crypto.clone() {
+        if let Err(e) = CRYPTO_CLIENT.set(crypto) {
+            panic!("store crypto client error: {e:?}");
+        }
     }
+
     if let Err(e) = ROUGH_INTERNAL.set(config.rough_internal.unwrap_or_default()) {
         panic!("set rough internal fail: {e:?}")
     }

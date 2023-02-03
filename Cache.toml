@@ -60,18 +60,16 @@ is_master = false
 
 ## set only when the `nyc` profile is selected
 [test]
-port = 8000
+port = 8888
 limits = { json = "10MiB" }
 controller_addr = "http://127.0.0.1:50004"
 executor_addr = "http://127.0.0.1:50002"
 local_executor_addr = "http://127.0.0.1:55557"
 crypto_addr = "http://127.0.0.1:50005"
-redis_addr = "redis://default:rivtower@127.0.0.1:6377"
+redis_addr = "redis://default:rivtower@127.0.0.1:6379"
 timing_internal_sec = 1
-timing_batch = 100
-log_level = "normal"
-expire_time = 60
-rough_internal = 10
+timing_batch = 5000
+log_level = "critical"
 crypto_type = "SM"
 is_master = true
 
