@@ -26,6 +26,13 @@ use rocket::serde::json::Json;
 use rocket::State;
 use serde_json::{json, Value};
 
+///Get version
+#[get("/get-version")]
+#[utoipa::path(get, path = "/api/get-version")]
+pub async fn version() -> Json<CacheResult<Value>> {
+    Json(success(json!(1)))
+}
+
 ///Get current block number
 #[get("/get-block-number")]
 #[utoipa::path(get, path = "/api/get-block-number")]

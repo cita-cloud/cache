@@ -40,6 +40,7 @@ use log::{set_logger, set_max_level};
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, receipt, system_config, tx,
+    version,
 };
 use rest_api::post::{call, create, send_tx};
 use rocket::config::LogLevel;
@@ -73,6 +74,7 @@ fn rocket(figment: Figment) -> Rocket<Build> {
         .mount(
             "/api",
             routes![
+                version,
                 block_number,
                 abi,
                 balance,
@@ -170,19 +172,19 @@ async fn set_param(
         config.workers,
     );
     if let Err(e) = CONTROLLER_CLIENT.set(ctx.controller.clone()) {
-        panic!("store controller client error: {:?}", e);
+        panic!("store controller client error: {e:?}");
     }
     if let Err(e) = EXECUTOR_CLIENT.set(ctx.executor.clone()) {
-        panic!("store executor client error: {:?}", e);
+        panic!("store executor client error: {e:?}");
     }
     if let Err(e) = EVM_CLIENT.set(ctx.evm.clone()) {
-        panic!("store evm client error: {:?}", e);
+        panic!("store evm client error: {e:?}");
     }
     if let Err(e) = CRYPTO_CLIENT.set(ctx.crypto.clone()) {
-        panic!("store crypto client error: {:?}", e);
+        panic!("store crypto client error: {e:?}");
     }
     if let Err(e) = ROUGH_INTERNAL.set(config.rough_internal.unwrap_or_default()) {
-        panic!("set rough internal fail: {:?}", e)
+        panic!("set rough internal fail: {e:?}");
     }
     (
         ctx,
@@ -204,7 +206,7 @@ async fn main() {
         ));
     let config = figment.extract::<CacheConfig>().unwrap_or_default();
     if let Err(e) = set_cache_logger(LevelFilter::from(config.log_level)).await {
-        panic!("set cache logger failed: {}", e);
+        panic!("set cache logger failed: {e}");
     }
     info!("cache config: {}", config.display());
     let (ctx, timing_internal_sec, timing_batch, expire_time) = set_param(config.clone()).await;

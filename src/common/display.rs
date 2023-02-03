@@ -19,7 +19,7 @@ use cita_cloud_proto::{
         raw_transaction::Tx, Block, CompactBlock, RawTransaction, Transaction,
         UnverifiedTransaction, UnverifiedUtxoTransaction, UtxoTransaction, Witness,
     },
-    common::{NodeHeight, NodeNetInfo, NodeStatus, TotalNodeNetInfo},
+    common::{NodeNetInfo, NodeStatus, PeerStatus, TotalNodeNetInfo},
     controller::SystemConfig,
     evm::{Balance, ByteAbi, ByteCode, Log, Nonce, Receipt},
     executor::CallResponse,
@@ -278,11 +278,12 @@ impl Display for Log {
         })
     }
 }
-impl Display for NodeHeight {
+impl Display for PeerStatus {
     fn to_json(&self) -> Json {
         json!({
             "height": self.height,
             "address": hex(&self.address),
+            "node_net_info": json!(self.node_net_info.as_ref().map(|s| s.to_json()).unwrap_or_else(|| json!({}))),
         })
     }
 }
@@ -310,9 +311,8 @@ impl Display for NodeStatus {
             "is_sync": self.is_sync,
             "version": self.version,
             "self_status": self.self_status.as_ref().map(|s| s.to_json()).unwrap_or_else(|| json!({})),
-            "peer_status": json!(self.peer_status.iter().map(|t| t.to_json()).collect::<Vec<_>>()),
-            "connected_peer_count": self.connected_peer_count,
-            "connected_peers_info": self.connected_peers_info.as_ref().map(|c| c.to_json()).unwrap_or_else(|| json!({})),
+            "peers_status": json!(self.peers_status.iter().map(|t| t.to_json()).collect::<Vec<_>>()),
+            "is_danger": self.is_danger,
         })
     }
 }

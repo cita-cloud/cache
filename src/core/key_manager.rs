@@ -34,42 +34,42 @@ use serde_json::Value;
 use std::future::Future;
 
 fn uncommitted_tx_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, UNCOMMITTED_TX)
+    format!("{KEY_PREFIX}:{ZSET_TYPE}:{UNCOMMITTED_TX}")
 }
 
 fn committed_tx_key() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, ZSET_TYPE, COMMITTED_TX)
+    format!("{KEY_PREFIX}:{ZSET_TYPE}:{COMMITTED_TX}")
 }
 
 fn hash_to_tx() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_TX)
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_TX}")
 }
 
 fn hash_to_block_number() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, HASH_TO_BLOCK_NUMBER)
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_BLOCK_NUMBER}")
 }
 
 fn clean_up_key(time: u64) -> String {
-    format!("{}:{}:{}:{}", KEY_PREFIX, SET_TYPE, TIME_TO_CLEAN_UP, time)
+    format!("{KEY_PREFIX}:{SET_TYPE}:{TIME_TO_CLEAN_UP}:{time}")
 }
 fn clean_up_pattern() -> String {
     format!("{}*", clean_up_prefix())
 }
 
 fn clean_up_prefix() -> String {
-    format!("{}:{}:{}:", KEY_PREFIX, SET_TYPE, TIME_TO_CLEAN_UP)
+    format!("{KEY_PREFIX}:{SET_TYPE}:{TIME_TO_CLEAN_UP}:")
 }
 
 fn lazy_evict_to_time() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, LAZY_EVICT_TO_TIME)
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{LAZY_EVICT_TO_TIME}")
 }
 
 fn evict_to_rough_time() -> String {
-    format!("{}:{}:{}", KEY_PREFIX, HASH_TYPE, EVICT_TO_ROUGH_TIME)
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{EVICT_TO_ROUGH_TIME}")
 }
 
 fn val_prefix() -> String {
-    format!("{}:{}", KEY_PREFIX, VAL_TYPE)
+    format!("{KEY_PREFIX}:{VAL_TYPE}")
 }
 
 fn current_clean_up_key() -> String {
@@ -413,7 +413,7 @@ impl CacheBehavior for CacheManager {
             let tx = match Self::original_tx(tx_hash.clone()) {
                 Ok(tx) => tx,
                 Err(e) => {
-                    Self::save_error(tx_hash.clone(), format!("{}", e), expire_time * 5)?;
+                    Self::save_error(tx_hash.clone(), format!("{e}"), expire_time * 5)?;
                     Self::clean_up_tx(tx_hash.clone())?;
                     continue;
                 }
@@ -433,7 +433,7 @@ impl CacheBehavior for CacheManager {
                         empty.as_slice()
                     };
                     let hash = hex_without_0x(hash).to_string();
-                    Self::save_error(hash.clone(), format!("{}", e), expire_time * 5)?;
+                    Self::save_error(hash.clone(), format!("{e}"), expire_time * 5)?;
                     Self::clean_up_tx(hash.clone())?;
                     warn!("commit tx fail, hash: {}", hash);
                 }
@@ -453,7 +453,7 @@ impl CacheBehavior for CacheManager {
                 }
                 Err(e) => {
                     info!("retry -> get receipt, hash: {}", tx_hash.clone());
-                    (format!("{}", e), expire_time * 5, false)
+                    (format!("{e}"), expire_time * 5, false)
                 }
             };
             CacheManager::save_receipt_content(tx_hash.clone(), receipt, expire_time)?;
@@ -465,7 +465,7 @@ impl CacheBehavior for CacheManager {
                     }
                     Err(e) => {
                         info!("retry -> get tx, hash: {}", tx_hash.clone());
-                        (format!("{}", e), expire_time * 5)
+                        (format!("{e}"), expire_time * 5)
                     }
                 };
                 CacheManager::save_tx_content(tx_hash.clone(), tx, expire_time)?;

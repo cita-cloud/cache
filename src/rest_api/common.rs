@@ -51,7 +51,7 @@ pub fn failure(e: Error) -> CacheResult<Value> {
     CacheResult {
         status: FAILURE,
         data: None,
-        message: format!("{}", e),
+        message: format!("{e}"),
     }
 }
 
@@ -86,7 +86,7 @@ account_nonce,
 receipt,
 system_config,
 block_hash,
-// version,
+version,
 call,
 create,
 send_tx,
