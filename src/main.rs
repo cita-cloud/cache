@@ -56,8 +56,8 @@ use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::core::schedule_task::{
-    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PackTxTask,
-    PollTxsTask, ReplayTask, ScheduleTask, UsefulParamTask,
+    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PollTxsTask,
+    ReplayTask, ScheduleTask, UsefulParamTask,
 };
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
@@ -239,7 +239,6 @@ async fn main() {
     }
     let seconds = timing_internal_sec * 1000;
     tokio::spawn(CommitTxTask::schedule(seconds, timing_batch, expire_time));
-    tokio::spawn(PackTxTask::schedule(seconds, timing_batch, expire_time));
     tokio::spawn(CheckTxTask::schedule(
         2 * seconds,
         timing_batch,
