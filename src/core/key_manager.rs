@@ -763,6 +763,7 @@ impl CacheBehavior for CacheManager {
                             let account = maybe.unlocked()?;
                             let block_hash = account.hash(block_header_bytes.as_slice());
                             BlockContext::step_next(block_hash)?;
+                            CacheManager::package(timing_batch, expire_time).await?;
                         }
                     }
                 }

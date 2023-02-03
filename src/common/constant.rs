@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::redis::Pool;
-use crate::{ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
 use tokio::sync::OnceCell;
 
 pub const SUCCESS: u64 = 1;
@@ -60,6 +60,7 @@ pub static EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
 pub static LOCAL_EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
 pub static CRYPTO_CLIENT: OnceCell<CryptoClient> = OnceCell::const_new();
 pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
+pub static CACHE_CONFIG: OnceCell<CacheConfig> = OnceCell::const_new();
 
 pub fn rough_internal() -> u64 {
     *ROUGH_INTERNAL.get().unwrap() * ONE_THOUSAND
@@ -75,4 +76,8 @@ pub fn local_executor() -> ExecutorClient {
 
 pub fn evm() -> EvmClient {
     EVM_CLIENT.get().unwrap().clone()
+}
+
+pub fn config() -> CacheConfig {
+    CACHE_CONFIG.get().unwrap().clone()
 }

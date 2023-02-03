@@ -32,7 +32,7 @@ pub struct Context<Co, Ex, Ev, Cr> {
     pub local_executor: Ex,
     pub evm: Ev,
     pub local_evm: Ev,
-    pub crypto: Cr,
+    pub crypto: Option<Cr>,
     pub redis_pool: Pool,
 }
 
@@ -41,7 +41,7 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
         controller_addr: String,
         executor_addr: String,
         local_executor_addr: String,
-        crypto_addr: String,
+        crypto_addr: Option<String>,
         redis_addr: String,
         workers: u64,
     ) -> Self
@@ -90,13 +90,17 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
             }
         }));
 
-        let crypto_client = OnceCell::new_with(Some({
-            let client_options = ClientOptions::new(CLIENT_NAME.to_string(), crypto_addr);
-            match client_options.connect_crypto() {
-                Ok(retry_client) => retry_client,
-                Err(e) => panic!("client init error: {:?}", &e),
-            }
-        }));
+        let mut crypto = None;
+        if let Some(crypto_addr) = crypto_addr {
+            let crypto_client = OnceCell::new_with(Some({
+                let client_options = ClientOptions::new(CLIENT_NAME.to_string(), crypto_addr);
+                match client_options.connect_crypto() {
+                    Ok(retry_client) => retry_client,
+                    Err(e) => panic!("client init error: {:?}", &e),
+                }
+            }));
+            crypto = Some(Cr::connect(crypto_client));
+        }
 
         let redis_pool = pool(redis_addr, workers as u32);
         if let Err(e) = REDIS_POOL.set(redis_pool.clone()) {
@@ -107,7 +111,7 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> Context<Co, Ex, Ev, Cr> {
         let local_executor = Ex::connect(local_executor_client);
         let evm = Ev::connect(evm_client);
         let local_evm = Ev::connect(local_evm_client);
-        let crypto = Cr::connect(crypto_client);
+
         Self {
             controller,
             executor,

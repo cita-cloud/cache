@@ -56,8 +56,8 @@ use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::core::schedule_task::{
-    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PackTxTask,
-    PollTxsTask, ReplayTask, ScheduleTask, UsefulParamTask,
+    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PollTxsTask,
+    ReplayTask, ScheduleTask, UsefulParamTask,
 };
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
@@ -177,7 +177,7 @@ async fn set_param(
         config.controller_addr.unwrap_or_default(),
         config.executor_addr.unwrap_or_default(),
         config.local_executor_addr.unwrap_or_default(),
-        config.crypto_addr.unwrap_or_default(),
+        config.crypto_addr,
         config.redis_addr.unwrap_or_default(),
         config.workers,
     );
@@ -196,9 +196,12 @@ async fn set_param(
     if let Err(e) = LOCAL_EVM_CLIENT.set(ctx.local_evm.clone()) {
         panic!("store evm client error: {e:?}");
     }
-    if let Err(e) = CRYPTO_CLIENT.set(ctx.crypto.clone()) {
-        panic!("store crypto client error: {e:?}");
+    if let Some(crypto) = ctx.crypto.clone() {
+        if let Err(e) = CRYPTO_CLIENT.set(crypto) {
+            panic!("store crypto client error: {e:?}");
+        }
     }
+
     if let Err(e) = ROUGH_INTERNAL.set(config.rough_internal.unwrap_or_default()) {
         panic!("set rough internal fail: {e:?}")
     }
@@ -236,7 +239,6 @@ async fn main() {
     }
     let seconds = timing_internal_sec * 1000;
     tokio::spawn(CommitTxTask::schedule(seconds, timing_batch, expire_time));
-    tokio::spawn(PackTxTask::schedule(seconds, timing_batch, expire_time));
     tokio::spawn(CheckTxTask::schedule(
         2 * seconds,
         timing_batch,
