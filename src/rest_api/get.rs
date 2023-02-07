@@ -16,17 +16,44 @@ extern crate rocket;
 
 use crate::cita_cloud::controller::ControllerBehaviour;
 use crate::cita_cloud::evm::EvmBehaviour;
-use crate::common::constant::CITA_CLOUD_BLOCK_NUMBER;
+use crate::common::constant::keypair;
 use crate::common::display::Display;
-use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
+use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x, timestamp};
 use crate::core::context::Context;
-use crate::core::key_manager::{key, key_without_param, CacheBehavior, CacheManager};
+use crate::core::key_manager::{key, CacheBehavior, CacheManager};
+use crate::redis::con;
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{get, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{
+    BlockContext, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash,
+};
 use anyhow::anyhow;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde_json::{json, Value};
+
+///Get version
+#[get("/get-version/<flag>")]
+#[utoipa::path(get, path = "/api/get-version/{flag}",
+params(
+("flag", description = "The flag"),
+))]
+pub async fn version(flag: bool) -> Json<CacheResult<Value>> {
+    if flag {
+        let first = timestamp();
+
+        let keypair = keypair();
+
+        keypair
+            .sign(Hash::default().as_slice())
+            .expect("sm2 sign failed");
+
+        // sm2_sign(Hash::default().as_slice(), &sm2_generate_secret_key());
+        println!("sign message cost {} ms!", timestamp() - first);
+        // let con = &mut con();
+        // publish(con, "channel".to_string(), "msg".to_string());
+    }
+    Json(success(json!(1)))
+}
 
 ///Get current block number
 #[get("/get-block-number")]
@@ -34,8 +61,9 @@ use serde_json::{json, Value};
 pub async fn block_number(
     _ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    match get::<u64>(key_without_param(CITA_CLOUD_BLOCK_NUMBER.to_string())) {
-        Ok(bn) => Json(success(json!(bn))),
+    let con = &mut con();
+    match BlockContext::current_cita_height(con) {
+        Ok(height) => Json(success(json!(height))),
         Err(e) => Json(failure(anyhow!(e))),
     }
 }
@@ -60,7 +88,10 @@ pub async fn abi(
         Ok(address) => address,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query(
+    let con = &mut con();
+
+    match CacheManager::load_or_query_proto(
+        con,
         key("abi".to_string(), address.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.evm.get_abi(data),
@@ -92,7 +123,9 @@ pub async fn balance(
         Ok(address) => address,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query(
+    let con = &mut con();
+    match CacheManager::load_or_query_proto(
+        con,
         key("balance".to_string(), address.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.evm.get_balance(data),
@@ -121,8 +154,11 @@ pub async fn block(
     info!("get-block hash_or_height {}", hash_or_height);
     let hash_or_height = remove_0x(hash_or_height);
     let expire_time = config.expire_time.unwrap_or_default() as usize;
+    let con = &mut con();
+
     let result = if let Ok(data) = parse_u64(hash_or_height) {
-        CacheManager::load_or_query(
+        CacheManager::load_or_query_proto(
+            con,
             key("block".to_string(), hash_or_height.to_string()),
             expire_time,
             ctx.controller.get_block_by_number(data),
@@ -131,7 +167,8 @@ pub async fn block(
     } else {
         match parse_hash(hash_or_height) {
             Ok(data) => {
-                CacheManager::load_or_query(
+                CacheManager::load_or_query_proto(
+                    con,
                     key("block".to_string(), hash_or_height.to_string()),
                     expire_time,
                     ctx.controller.get_block_by_hash(data),
@@ -167,7 +204,9 @@ pub async fn code(
         Ok(address) => address,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query(
+    let con = &mut con();
+    match CacheManager::load_or_query_proto(
+        con,
         key("code".to_string(), address.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.evm.get_code(data),
@@ -199,11 +238,12 @@ pub async fn tx(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query_obj(
+    let con = &mut con();
+    match CacheManager::load_or_query_proto(
+        con,
         key("tx".to_string(), hash.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.controller.get_tx(data),
-        true,
     )
     .await
     {
@@ -232,7 +272,9 @@ pub async fn account_nonce(
         Ok(address) => address,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query(
+    let con = &mut con();
+    match CacheManager::load_or_query_proto(
+        con,
         key("account-nonce".to_string(), address.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.evm.get_tx_count(data),
@@ -264,11 +306,12 @@ pub async fn receipt(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query_obj(
+    let con = &mut con();
+    match CacheManager::load_or_query_proto(
+        con,
         key("receipt".to_string(), hash.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.local_evm.get_receipt(data),
-        true,
     )
     .await
     {
@@ -297,11 +340,12 @@ pub async fn receipt_inner(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    match CacheManager::load_or_query_obj(
+    let con = &mut con();
+    match CacheManager::load_or_query_proto(
+        con,
         key("receipt-inner".to_string(), hash.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.evm.get_receipt(data),
-        true,
     )
     .await
     {
@@ -313,12 +357,11 @@ pub async fn receipt_inner(
 ///Get system config
 #[get("/get-system-config")]
 #[utoipa::path(get, path = "/api/get-system-config")]
-pub async fn system_config(
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-) -> Json<CacheResult<Value>> {
-    match ctx.controller.get_system_config().await {
-        Ok(system_config) => Json(success(system_config.to_json())),
-        Err(e) => Json(failure(e)),
+pub async fn system_config() -> Json<CacheResult<Value>> {
+    let con = &mut con();
+    match BlockContext::system_config(con) {
+        Ok(config) => Json(success(json!(config.to_json()))),
+        Err(e) => Json(failure(anyhow!(e))),
     }
 }
 
@@ -337,7 +380,9 @@ pub async fn block_hash(
     ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-block-hash block_number {}", block_number);
-    match CacheManager::load_or_query(
+    let con = &mut con();
+    match CacheManager::load_or_query_array_like(
+        con,
         key("block-hash".to_string(), block_number.to_string()),
         config.expire_time.unwrap_or_default() as usize,
         ctx.controller.get_block_hash(block_number as u64),

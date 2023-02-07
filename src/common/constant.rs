@@ -14,6 +14,7 @@
 
 use crate::redis::Pool;
 use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use efficient_sm2::KeyPair;
 use tokio::sync::OnceCell;
 
 pub const SUCCESS: u64 = 1;
@@ -26,6 +27,7 @@ pub const HASH_TYPE: &str = "hash";
 pub const SET_TYPE: &str = "set";
 pub const ZSET_TYPE: &str = "zset";
 pub const VAL_TYPE: &str = "val";
+pub const EVENT_TYPE: &str = "event";
 
 pub const ROLLUP_WRITE_ENABLE: &str = "rollup_write_enable";
 
@@ -51,6 +53,7 @@ pub const RECEIPT: &str = "receipt";
 pub const TX: &str = "tx";
 pub const CONTRACT_KEY: &str = "contract";
 pub const EXPIRED_KEY_EVENT_AT_ALL_DB: &str = "__keyevent@*__:expired";
+pub const EXPIRE_TYPE: &str = "expire";
 
 pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
 pub static CONTROLLER_CLIENT: OnceCell<ControllerClient> = OnceCell::const_new();
@@ -61,6 +64,7 @@ pub static LOCAL_EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
 pub static CRYPTO_CLIENT: OnceCell<CryptoClient> = OnceCell::const_new();
 pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
 pub static CACHE_CONFIG: OnceCell<CacheConfig> = OnceCell::const_new();
+pub static KEY_PAIR: OnceCell<KeyPair> = OnceCell::const_new();
 
 pub fn rough_internal() -> u64 {
     *ROUGH_INTERNAL.get().unwrap() * ONE_THOUSAND
@@ -69,6 +73,11 @@ pub fn rough_internal() -> u64 {
 pub fn controller() -> ControllerClient {
     CONTROLLER_CLIENT.get().unwrap().clone()
 }
+
+// #[warn(dead_code)]
+// pub fn crypto() -> CryptoClient {
+//     CRYPTO_CLIENT.get().unwrap().clone()
+// }
 
 pub fn local_executor() -> ExecutorClient {
     LOCAL_EXECUTOR_CLIENT.get().unwrap().clone()
@@ -80,4 +89,8 @@ pub fn evm() -> EvmClient {
 
 pub fn config() -> CacheConfig {
     CACHE_CONFIG.get().unwrap().clone()
+}
+
+pub fn keypair() -> KeyPair {
+    KEY_PAIR.get().unwrap().clone()
 }

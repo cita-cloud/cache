@@ -13,21 +13,14 @@
 // limitations under the License.
 
 use crate::cita_cloud::{controller::ControllerBehaviour, evm::EvmBehaviour};
-use crate::common::constant::{
-    controller, evm, local_executor, rough_internal, ADMIN_ACCOUNT, CITA_CLOUD_BLOCK_NUMBER,
-    COMMITTED_TX, CONTRACT_KEY, CURRENT_BATCH_NUMBER, CURRENT_FAKE_BLOCK_HASH, EVICT_TO_ROUGH_TIME,
-    EXPIRED_KEY_EVENT_AT_ALL_DB, HASH_TO_BLOCK_NUMBER, HASH_TO_TX, HASH_TYPE, KEY_PREFIX,
-    LAZY_EVICT_TO_TIME, ONE_THOUSAND, PACKAGED_TX, PACK_UNCOMMITTED_TX, ROLLUP_WRITE_ENABLE,
-    SET_TYPE, SYSTEM_CONFIG, TIME_TO_CLEAN_UP, UNCOMMITTED_TX, VALIDATE_TX_BUFFER,
-    VALIDATOR_BATCH_NUMBER, VAL_TYPE, ZSET_TYPE,
-};
+use crate::common::constant::*;
 use crate::common::util::{hex_without_0x, parse_hash, timestamp};
-use crate::redis::{hexists, sadd, sismember, smove, ttl};
+use crate::redis::{hexists, sadd, sismember, smove, ttl, Connection};
 use crate::{
-    delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
+    con, delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, Block, RawTransaction};
 
 use crate::cita_cloud::controller::{SignerBehaviour, TransactionSenderBehaviour};
@@ -39,7 +32,7 @@ use crate::rest_api::post::ToTx;
 use msgpack_schema::deserialize;
 use prost::Message;
 use r2d2_redis::redis::{ControlFlow, FromRedisValue, ToRedisArgs};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::future::Future;
 
 fn uncommitted_tx_key() -> String {
@@ -84,6 +77,10 @@ fn lazy_evict_to_time() -> String {
 
 fn evict_to_rough_time() -> String {
     format!("{KEY_PREFIX}:{HASH_TYPE}:{EVICT_TO_ROUGH_TIME}")
+}
+
+pub fn expire_channel() -> String {
+    format!("{KEY_PREFIX}:{EVENT_TYPE}:{EXPIRE_TYPE}")
 }
 
 fn val_prefix() -> String {
@@ -153,11 +150,18 @@ fn contract_pattern(to: String) -> String {
     format!("{}:{}:{}*", val_prefix(), CONTRACT_KEY, to)
 }
 
-async fn check_if_timeout(tx_hash: String) -> Result<bool> {
+async fn check_if_timeout(con: &mut Connection, tx_hash: String) -> Result<bool> {
     let current = controller().get_block_number(false).await?;
     let config = controller().get_system_config().await?;
-    let valid_until_block = CacheManager::valid_until_block(tx_hash)?;
+    let valid_until_block = CacheManager::valid_until_block(con, tx_hash)?;
     Ok(valid_until_block <= current || valid_until_block > (current + config.block_limit as u64))
+}
+
+use serde::{Deserialize, Serialize};
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Expire {
+    expire_time: usize,
+    key: String,
 }
 
 #[tonic::async_trait]
@@ -166,62 +170,85 @@ pub trait ExpiredBehavior {
 
     fn rough_time(expire_time: u64, rough_internal: u64) -> u64;
 
-    fn update_expire(key: String, seconds: usize) -> Result<()>;
+    fn update_expire(con: &mut Connection, key: String, seconds: usize) -> Result<()>;
 
-    fn delete_expire(key: String, member: String) -> Result<()>;
+    fn delete_expire(con: &mut Connection, key: String, member: String) -> Result<()>;
 
-    fn create_expire(key: String, seconds: usize) -> Result<()>;
+    fn create_expire(con: &mut Connection, key: String, seconds: usize) -> Result<()>;
 }
 
 #[tonic::async_trait]
 pub trait ValBehavior {
-    fn save_val(key: String, val: String, expire_time: usize) -> Result<String>;
+    fn save_val<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+        con: &mut Connection,
+        key: String,
+        val: T,
+        expire_time: usize,
+    ) -> Result<String>;
 
-    fn exist_val(key: String) -> Result<bool>;
+    fn exist_val(con: &mut Connection, key: String) -> Result<bool>;
 
-    fn load_val(key: String, expire_time: usize) -> Result<String>;
+    fn load_val<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+        con: &mut Connection,
+        key: String,
+        expire_time: usize,
+    ) -> Result<T>;
 }
 
 #[tonic::async_trait]
 pub trait TxBehavior {
-    fn enqueue_tx(hash_str: String, tx: Vec<u8>, need_package: bool) -> Result<()>;
-    fn commit_tx(tx_hash: String, score: u64) -> Result<()>;
+    fn enqueue_tx(
+        con: &mut Connection,
+        hash_str: String,
+        tx: Vec<u8>,
+        need_package: bool,
+    ) -> Result<()>;
+    fn commit_tx(con: &mut Connection, tx_hash: String, score: u64) -> Result<()>;
 
-    fn original_tx(tx_hash: String) -> Result<Vec<u8>>;
+    fn original_tx(con: &mut Connection, tx_hash: String) -> Result<Vec<u8>>;
 
-    fn valid_until_block(tx_hash: String) -> Result<u64>;
+    fn valid_until_block(con: &mut Connection, tx_hash: String) -> Result<u64>;
 
-    fn save_valid_until_block(tx_hash: String, valid_until_block: u64) -> Result<u64>;
+    fn save_valid_until_block(
+        con: &mut Connection,
+        tx_hash: String,
+        valid_until_block: u64,
+    ) -> Result<u64>;
 
-    fn uncommitted_txs(size: isize) -> Result<Vec<(String, u64)>>;
+    fn uncommitted_txs(con: &mut Connection, size: isize) -> Result<Vec<(String, u64)>>;
 
-    fn pack_uncommitted_txs(size: isize) -> Result<Vec<(String, u64)>>;
+    fn pack_uncommitted_txs(con: &mut Connection, size: isize) -> Result<Vec<(String, u64)>>;
 
-    fn committed_txs(size: isize) -> Result<Vec<(String, u64)>>;
+    fn committed_txs(con: &mut Connection, size: isize) -> Result<Vec<(String, u64)>>;
 
-    fn clean_up_tx(tx_hash: String) -> Result<()>;
+    fn clean_up_tx(con: &mut Connection, tx_hash: String) -> Result<()>;
 }
 
 #[tonic::async_trait]
 pub trait ContractBehavior {
-    fn try_clean_contract_data(tx_hash: String) -> Result<()>;
-    fn try_clean_contract(raw_tx: RawTransaction) -> Result<()>;
+    fn try_clean_contract_data(con: &mut Connection, tx_hash: String) -> Result<()>;
+    fn try_clean_contract(con: &mut Connection, raw_tx: RawTransaction) -> Result<()>;
 }
 
 #[tonic::async_trait]
 pub trait PackBehavior {
-    async fn package(timing_batch: isize, expire_time: usize) -> Result<()>;
-    fn is_packaged_tx(hash: String) -> Result<bool>;
-    fn tag_tx(hash: String) -> Result<()>;
+    async fn package(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()>;
+    fn is_packaged_tx(con: &mut Connection, hash: String) -> Result<bool>;
+    fn tag_tx(con: &mut Connection, hash: String) -> Result<()>;
 }
 
 #[tonic::async_trait]
 pub trait ValidatorBehavior {
-    fn enqueue_to_buffer(hash_str: String, package_data: Vec<u8>, batch_number: u64) -> Result<()>;
-    fn dequeue_smallest_from_buffer() -> Result<Vec<(String, u64)>>;
-    fn clean(member: String) -> Result<()>;
-    async fn poll(timing_batch: isize, expire_time: usize) -> Result<()>;
-    async fn replay(timing_batch: isize, expire_time: usize) -> Result<()>;
+    fn enqueue_to_buffer(
+        con: &mut Connection,
+        hash_str: String,
+        package_data: Vec<u8>,
+        batch_number: u64,
+    ) -> Result<()>;
+    fn dequeue_smallest_from_buffer(con: &mut Connection) -> Result<Vec<(String, u64)>>;
+    fn clean(con: &mut Connection, member: String) -> Result<()>;
+    async fn poll(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()>;
+    async fn replay(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()>;
 }
 
 #[tonic::async_trait]
@@ -229,55 +256,79 @@ pub trait CacheBehavior:
     ExpiredBehavior + ValBehavior + ContractBehavior + PackBehavior + ValidatorBehavior
 {
     fn enqueue(
+        con: &mut Connection,
         hash_str: String,
         tx: Vec<u8>,
         valid_util_block: u64,
         need_package: bool,
     ) -> Result<()>;
-    async fn load_or_query<F, T>(key: String, expire_time: usize, f: F) -> Result<Value>
-    where
-        T: Display,
-        F: Send + Future<Output = Result<T>>;
-
-    async fn load_or_query_obj<F, T>(
+    async fn load_or_query_array_like<F, T>(
+        con: &mut Connection,
         key: String,
         expire_time: usize,
         f: F,
-        is_obj: bool,
     ) -> Result<Value>
     where
-        T: Display,
+        T: Display + ArrayLike,
         F: Send + Future<Output = Result<T>>;
 
-    fn save_tx_content(tx_hash: String, tx: String, expire_time: usize) -> Result<()>;
+    async fn load_or_query_proto<F, T>(
+        con: &mut Connection,
+        key: String,
+        expire_time: usize,
+        f: F,
+    ) -> Result<Value>
+    where
+        T: Display + prost::Message + Default,
+        F: Send + Future<Output = Result<T>>;
 
-    fn save_receipt_content(tx_hash: String, tx: String, expire_time: usize) -> Result<()>;
+    fn save_tx_content(
+        con: &mut Connection,
+        tx_hash: String,
+        tx: String,
+        expire_time: usize,
+    ) -> Result<()>;
 
-    fn save_error(hash: String, err_str: String, expire_time: usize) -> Result<()>;
+    fn save_receipt_content(
+        con: &mut Connection,
+        tx_hash: String,
+        tx: String,
+        expire_time: usize,
+    ) -> Result<()>;
 
-    fn clean_up_expired_by_key(expired_key: String) -> Result<String>;
+    fn save_error(
+        con: &mut Connection,
+        hash: String,
+        err_str: String,
+        expire_time: usize,
+    ) -> Result<()>;
+
+    fn clean_up_expired_by_key(con: &mut Connection, expired_key: String) -> Result<String>;
 
     fn set_ex<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+        con: &mut Connection,
         key: String,
         val: T,
         seconds: usize,
     ) -> Result<String>;
 
-    fn expire(key: String, seconds: usize) -> Result<u64>;
+    fn expire(con: &mut Connection, key: String, seconds: usize) -> Result<u64>;
 
-    fn clean_up_expired(key: String, member: String) -> Result<()>;
+    fn clean_up_expired(con: &mut Connection, key: String, member: String) -> Result<()>;
 
-    fn clean_up_packaged_txs(hash_list: Vec<String>) -> Result<()>;
+    fn clean_up_packaged_txs(con: &mut Connection, hash_list: Vec<String>) -> Result<()>;
 
-    async fn commit(timing_batch: isize, expire_time: usize) -> Result<()>;
+    async fn commit(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()>;
 
-    async fn check(timing_batch: isize, expire_time: usize) -> Result<()>;
+    async fn check(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()>;
 
-    async fn try_lazy_evict() -> Result<()>;
+    async fn try_lazy_evict(con: &mut Connection) -> Result<()>;
 
-    async fn sub_evict_event() -> Result<()>;
+    async fn sub_evict_event(con: &mut Connection) -> Result<()>;
 
-    async fn set_up() -> Result<()>;
+    async fn sub_expire_event(con: &mut Connection) -> Result<()>;
+
+    async fn set_up(con: &mut Connection) -> Result<()>;
 }
 
 pub struct CacheManager;
@@ -296,139 +347,162 @@ impl ExpiredBehavior for CacheManager {
     }
 
     //CacheManager::set_up()会清理掉过期的key，若被清理create_expire
-    fn update_expire(key: String, seconds: usize) -> Result<()> {
-        if hexists(lazy_evict_to_time(), key.clone())? {
-            let old_expire_time = hget(lazy_evict_to_time(), key.clone())?;
+    fn update_expire(con: &mut Connection, key: String, seconds: usize) -> Result<()> {
+        if hexists(con, lazy_evict_to_time(), key.clone())? {
+            let old_expire_time = hget(con, lazy_evict_to_time(), key.clone())?;
             let rough_internal = rough_internal();
             let old_rough_time = Self::rough_time(old_expire_time, rough_internal);
 
             let (expire_time, rough_time) = Self::time_pair(timestamp(), seconds, rough_internal);
 
             smove(
+                con,
                 clean_up_key(old_rough_time),
                 clean_up_key(rough_time),
                 key.clone(),
             )?;
-            hset(lazy_evict_to_time(), key.clone(), expire_time)?;
-            hset(evict_to_rough_time(), key, clean_up_key(rough_time))?;
+            hset(con, lazy_evict_to_time(), key.clone(), expire_time)?;
+            hset(con, evict_to_rough_time(), key, clean_up_key(rough_time))?;
             Ok(())
         } else {
-            Self::create_expire(key, seconds)
+            Self::create_expire(con, key, seconds)
         }
     }
 
-    fn delete_expire(key: String, member: String) -> Result<()> {
-        hdel(lazy_evict_to_time(), member.clone())?;
-        hdel(evict_to_rough_time(), member.clone())?;
-        srem(key, member)?;
+    fn delete_expire(con: &mut Connection, key: String, member: String) -> Result<()> {
+        hdel(con, lazy_evict_to_time(), member.clone())?;
+        hdel(con, evict_to_rough_time(), member.clone())?;
+        srem(con, key, member)?;
         Ok(())
     }
 
-    fn create_expire(key: String, seconds: usize) -> Result<()> {
+    fn create_expire(con: &mut Connection, key: String, seconds: usize) -> Result<()> {
         let (expire_time, rough_time) = Self::time_pair(timestamp(), seconds, rough_internal());
-        sadd(clean_up_key(rough_time), key.clone())?;
-        hset(lazy_evict_to_time(), key.clone(), expire_time)?;
-        hset(evict_to_rough_time(), key, clean_up_key(rough_time))?;
+        sadd(con, clean_up_key(rough_time), key.clone())?;
+        hset(con, lazy_evict_to_time(), key.clone(), expire_time)?;
+        hset(con, evict_to_rough_time(), key, clean_up_key(rough_time))?;
         Ok(())
     }
 }
 
 #[tonic::async_trait]
 impl TxBehavior for CacheManager {
-    fn enqueue_tx(hash_str: String, tx: Vec<u8>, need_package: bool) -> Result<()> {
+    fn enqueue_tx(
+        con: &mut Connection,
+        hash_str: String,
+        tx: Vec<u8>,
+        need_package: bool,
+    ) -> Result<()> {
         let key = if need_package {
             pack_uncommitted_tx_key()
         } else {
             uncommitted_tx_key()
         };
-        zadd(key, hash_str.clone(), timestamp())?;
-        hset(hash_to_tx(), hash_str, tx)?;
+        zadd(con, key, hash_str.clone(), timestamp())?;
+        hset(con, hash_to_tx(), hash_str, tx)?;
         Ok(())
     }
 
-    fn commit_tx(tx_hash: String, score: u64) -> Result<()> {
-        zrem(uncommitted_tx_key(), tx_hash.clone())?;
-        zadd(committed_tx_key(), tx_hash, score)?;
+    fn commit_tx(con: &mut Connection, tx_hash: String, score: u64) -> Result<()> {
+        zrem(con, uncommitted_tx_key(), tx_hash.clone())?;
+        zadd(con, committed_tx_key(), tx_hash, score)?;
         Ok(())
     }
 
-    fn original_tx(tx_hash: String) -> Result<Vec<u8>> {
-        let tx = hget::<Vec<u8>>(hash_to_tx(), tx_hash)?;
+    fn original_tx(con: &mut Connection, tx_hash: String) -> Result<Vec<u8>> {
+        let tx = hget::<Vec<u8>>(con, hash_to_tx(), tx_hash)?;
         Ok(tx)
     }
 
-    fn valid_until_block(tx_hash: String) -> Result<u64> {
-        let valid_until_block = hget::<u64>(hash_to_block_number(), tx_hash)?;
+    fn valid_until_block(con: &mut Connection, tx_hash: String) -> Result<u64> {
+        let valid_until_block = hget::<u64>(con, hash_to_block_number(), tx_hash)?;
         Ok(valid_until_block)
     }
 
-    fn save_valid_until_block(tx_hash: String, valid_until_block: u64) -> Result<u64> {
-        let result = hset(hash_to_block_number(), tx_hash, valid_until_block)?;
+    fn save_valid_until_block(
+        con: &mut Connection,
+        tx_hash: String,
+        valid_until_block: u64,
+    ) -> Result<u64> {
+        let result = hset(con, hash_to_block_number(), tx_hash, valid_until_block)?;
         Ok(result)
     }
 
-    fn uncommitted_txs(size: isize) -> Result<Vec<(String, u64)>> {
-        let result = zrange_withscores::<String>(uncommitted_tx_key(), 0, size)?;
+    fn uncommitted_txs(con: &mut Connection, size: isize) -> Result<Vec<(String, u64)>> {
+        let result = zrange_withscores::<String>(con, uncommitted_tx_key(), 0, size)?;
         Ok(result)
     }
 
-    fn pack_uncommitted_txs(size: isize) -> Result<Vec<(String, u64)>> {
-        let result = zrange_withscores::<String>(pack_uncommitted_tx_key(), 0, size)?;
+    fn pack_uncommitted_txs(con: &mut Connection, size: isize) -> Result<Vec<(String, u64)>> {
+        let result = zrange_withscores::<String>(con, pack_uncommitted_tx_key(), 0, size)?;
         Ok(result)
     }
 
-    fn committed_txs(size: isize) -> Result<Vec<(String, u64)>> {
-        let result = zrange_withscores::<String>(committed_tx_key(), 0, size)?;
+    fn committed_txs(con: &mut Connection, size: isize) -> Result<Vec<(String, u64)>> {
+        let result = zrange_withscores::<String>(con, committed_tx_key(), 0, size)?;
         Ok(result)
     }
 
-    fn clean_up_tx(tx_hash: String) -> Result<()> {
-        zrem(pack_uncommitted_tx_key(), tx_hash.clone())?;
-        zrem(committed_tx_key(), tx_hash.clone())?;
-        zrem(uncommitted_tx_key(), tx_hash.clone())?;
-        hdel(hash_to_tx(), tx_hash.clone())?;
-        hdel(hash_to_block_number(), tx_hash.clone())?;
-        srem(packaged_tx(), tx_hash)?;
+    fn clean_up_tx(con: &mut Connection, tx_hash: String) -> Result<()> {
+        zrem(con, pack_uncommitted_tx_key(), tx_hash.clone())?;
+        zrem(con, committed_tx_key(), tx_hash.clone())?;
+        zrem(con, uncommitted_tx_key(), tx_hash.clone())?;
+        hdel(con, hash_to_tx(), tx_hash.clone())?;
+        hdel(con, hash_to_block_number(), tx_hash.clone())?;
+        srem(con, packaged_tx(), tx_hash)?;
         Ok(())
     }
 }
 
 #[tonic::async_trait]
 impl ValBehavior for CacheManager {
-    fn save_val(key: String, val: String, expire_time: usize) -> Result<String> {
-        Self::set_ex(key, val, expire_time)
+    fn save_val<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+        con: &mut Connection,
+        key: String,
+        val: T,
+        expire_time: usize,
+    ) -> Result<String> {
+        Self::set_ex(con, key, val, expire_time)
     }
 
-    fn exist_val(key: String) -> Result<bool> {
-        match ttl(key) {
+    fn exist_val(con: &mut Connection, key: String) -> Result<bool> {
+        match ttl(con, key) {
             Ok(time) => Ok(time > 0),
             Err(_) => Ok(false),
         }
     }
 
-    fn load_val(key: String, expire_time: usize) -> Result<String> {
-        Self::expire(key.clone(), expire_time)?;
-        let val = get(key)?;
+    fn load_val<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+        con: &mut Connection,
+        key: String,
+        expire_time: usize,
+    ) -> Result<T> {
+        Self::expire(con, key.clone(), expire_time)?;
+        let val = get(con, key)?;
+        // let expire = Expire {
+        //     expire_time, key
+        // };
+        // publish(expire_channel(), serde_json::to_string(&expire)?)?;
         Ok(val)
     }
 }
 
 #[tonic::async_trait]
 impl ContractBehavior for CacheManager {
-    fn try_clean_contract_data(tx_hash: String) -> Result<()> {
-        let tx = Self::original_tx(tx_hash)?;
+    fn try_clean_contract_data(con: &mut Connection, tx_hash: String) -> Result<()> {
+        let tx = Self::original_tx(con, tx_hash)?;
         let decoded: RawTransaction = Message::decode(tx.as_slice())?;
-        Self::try_clean_contract(decoded)?;
+        Self::try_clean_contract(con, decoded)?;
         Ok(())
     }
 
-    fn try_clean_contract(raw_tx: RawTransaction) -> Result<()> {
+    fn try_clean_contract(con: &mut Connection, raw_tx: RawTransaction) -> Result<()> {
         if let Some(Tx::NormalTx(normal_tx)) = raw_tx.tx {
             if let Some(transaction) = normal_tx.transaction {
                 let addr = hex_without_0x(&transaction.to);
-                if let Ok(keys) = keys::<String>(contract_pattern(addr)) {
+                if let Ok(keys) = keys::<String>(con, contract_pattern(addr)) {
                     if !keys.is_empty() {
-                        delete(keys)?;
+                        delete(con, keys)?;
                     }
                 }
             }
@@ -439,39 +513,40 @@ impl ContractBehavior for CacheManager {
 
 #[tonic::async_trait]
 impl PackBehavior for CacheManager {
-    async fn package(timing_batch: isize, _expire_time: usize) -> Result<()> {
-        let members = CacheManager::pack_uncommitted_txs(timing_batch)?;
+    async fn package(con: &mut Connection, timing_batch: isize, _expire_time: usize) -> Result<()> {
+        let members = CacheManager::pack_uncommitted_txs(con, timing_batch)?;
         if members.is_empty() {
             return Ok(());
         }
         let mut tx_list = Vec::new();
         let mut hash_list = Vec::new();
         for (tx_hash, _score) in members {
-            let tx = Self::original_tx(tx_hash.clone())?;
+            let tx = Self::original_tx(con, tx_hash.clone())?;
             let decoded: RawTransaction = Message::decode(tx.as_slice())?;
             tx_list.push(decoded);
             hash_list.push(tx_hash);
         }
-        let batch_number = BlockContext::get_batch_number().await?;
-        let maybe: MaybeLocked = BlockContext::current_account()?;
+        let batch_number = BlockContext::get_batch_number(con).await?;
+        let maybe: MaybeLocked = BlockContext::current_account(con)?;
         let account = maybe.unlocked()?;
         let proposer = account.address().to_vec();
-        let block = BlockContext::fake_block(proposer, tx_list.clone()).await?;
+        let block = BlockContext::fake_block(con, proposer, tx_list.clone()).await?;
 
         if let Ok(res) = local_executor().exec(block.clone()).await {
             if let Some(status) = res.status {
                 if status.code == 0 {
                     for raw_tx in tx_list {
-                        Self::try_clean_contract(raw_tx)?;
+                        Self::try_clean_contract(con, raw_tx)?;
                     }
 
                     let packaged_tx_obj = Package::new(batch_number, block.clone())
                         .to_packaged_tx(*account.address())?;
+                    let raw_tx = packaged_tx_obj.to(con, account, evm()).await?;
                     let hash = controller()
-                        .send_raw_tx(account, packaged_tx_obj.to(account, evm()).await?, false)
+                        .send_raw_tx(con, account, raw_tx, false)
                         .await?;
-                    Self::clean_up_packaged_txs(hash_list)?;
-                    Self::tag_tx(hex_without_0x(hash.as_slice()))?;
+                    Self::clean_up_packaged_txs(con, hash_list)?;
+                    Self::tag_tx(con, hex_without_0x(hash.as_slice()))?;
                     info!("package batch: {}.", batch_number);
                 }
             }
@@ -479,46 +554,56 @@ impl PackBehavior for CacheManager {
         Ok(())
     }
 
-    fn is_packaged_tx(hash: String) -> Result<bool> {
-        Ok(sismember(packaged_tx(), hash)?)
+    fn is_packaged_tx(con: &mut Connection, hash: String) -> Result<bool> {
+        Ok(sismember(con, packaged_tx(), hash)?)
     }
 
-    fn tag_tx(hash: String) -> Result<()> {
-        sadd(packaged_tx(), hash)?;
+    fn tag_tx(con: &mut Connection, hash: String) -> Result<()> {
+        sadd(con, packaged_tx(), hash)?;
         Ok(())
     }
 }
 
 #[tonic::async_trait]
 impl ValidatorBehavior for CacheManager {
-    fn enqueue_to_buffer(hash_str: String, package_data: Vec<u8>, batch_number: u64) -> Result<()> {
+    fn enqueue_to_buffer(
+        con: &mut Connection,
+        hash_str: String,
+        package_data: Vec<u8>,
+        batch_number: u64,
+    ) -> Result<()> {
         info!(
             "enqueue tx to validator buffer, hash: {}, batch number: {}",
             hash_str, batch_number
         );
-        zadd(validate_tx_buffer(), hash_str.clone(), batch_number)?;
-        hset(hash_to_tx(), hash_str, package_data)?;
+        zadd(con, validate_tx_buffer(), hash_str.clone(), batch_number)?;
+        hset(con, hash_to_tx(), hash_str, package_data)?;
         Ok(())
     }
 
-    fn dequeue_smallest_from_buffer() -> Result<Vec<(String, u64)>> {
-        Ok(zrange_withscores::<String>(validate_tx_buffer(), 0, 0)?)
+    fn dequeue_smallest_from_buffer(con: &mut Connection) -> Result<Vec<(String, u64)>> {
+        Ok(zrange_withscores::<String>(
+            con,
+            validate_tx_buffer(),
+            0,
+            0,
+        )?)
     }
 
-    fn clean(member: String) -> Result<()> {
-        zrem(validate_tx_buffer(), member.clone())?;
-        hdel(hash_to_tx(), member)?;
+    fn clean(con: &mut Connection, member: String) -> Result<()> {
+        zrem(con, validate_tx_buffer(), member.clone())?;
+        hdel(con, hash_to_tx(), member)?;
         Ok(())
     }
 
-    async fn poll(_timing_batch: isize, _expire_time: usize) -> Result<()> {
-        let account = BlockContext::current_account()?;
-        let cita_height = BlockContext::current_cita_height()?;
+    async fn poll(con: &mut Connection, _timing_batch: isize, _expire_time: usize) -> Result<()> {
+        let account = BlockContext::current_account(con)?;
+        let cita_height = BlockContext::current_cita_height(con)?;
         let key = validator_batch_number();
-        let validator_current_height = if exists(key.clone())? {
-            get(key.clone())?
+        let validator_current_height = if exists(con, key.clone())? {
+            get(con, key.clone())?
         } else {
-            incr_one(key.clone())?
+            incr_one(con, key.clone())?
         };
         if validator_current_height >= cita_height {
             return Ok(());
@@ -547,27 +632,27 @@ impl ValidatorBehavior for CacheManager {
                     let batch_number = decoded_package.batch_number;
                     info!("poll batch: {}!", batch_number);
                     let hash_str = hex_without_0x(normal_tx.transaction_hash.as_slice());
-                    Self::enqueue_to_buffer(hash_str, package_data, batch_number)?;
+                    Self::enqueue_to_buffer(con, hash_str, package_data, batch_number)?;
                 }
             }
         }
-        incr_one(key)?;
+        incr_one(con, key)?;
         Ok(())
     }
 
-    async fn replay(_timing_batch: isize, _expire_time: usize) -> Result<()> {
-        for (member, batch_number) in Self::dequeue_smallest_from_buffer()? {
-            if batch_number == BlockContext::get_batch_number().await? {
+    async fn replay(con: &mut Connection, _timing_batch: isize, _expire_time: usize) -> Result<()> {
+        for (member, batch_number) in Self::dequeue_smallest_from_buffer(con)? {
+            if batch_number == BlockContext::get_batch_number(con).await? {
                 info!("replay batch: {}!", batch_number);
-                let maybe = BlockContext::current_account()?;
+                let maybe = BlockContext::current_account(con)?;
                 let account = maybe.unlocked()?;
 
-                let raw = Self::original_tx(member.clone())?;
+                let raw = Self::original_tx(con, member.clone())?;
                 let decoded_package = deserialize::<Package>(raw.as_slice())?;
                 let block: Block = Message::decode(decoded_package.block.as_slice())?;
 
                 let mut header = block.header.expect("get block header failed");
-                header.prevhash = BlockContext::get_fake_block_hash().await?;
+                header.prevhash = BlockContext::get_fake_block_hash(con).await?;
                 if let Ok(res) = local_executor()
                     .exec(Block {
                         version: 0,
@@ -581,15 +666,15 @@ impl ValidatorBehavior for CacheManager {
                     if let Some(status) = res.status {
                         if status.code == 0 {
                             for raw_tx in block.body.expect("get block body failed").body {
-                                Self::try_clean_contract(raw_tx)?;
+                                Self::try_clean_contract(con, raw_tx)?;
                             }
                             let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
                             header
                                 .encode(&mut block_header_bytes)
                                 .expect("encode block header failed");
                             let block_hash = account.hash(block_header_bytes.as_slice());
-                            BlockContext::step_next(block_hash)?;
-                            Self::clean(member)?;
+                            BlockContext::step_next(con, block_hash)?;
+                            Self::clean(con, member)?;
                         }
                     }
                 }
@@ -601,115 +686,140 @@ impl ValidatorBehavior for CacheManager {
 #[tonic::async_trait]
 impl CacheBehavior for CacheManager {
     fn enqueue(
+        con: &mut Connection,
         hash_str: String,
         tx: Vec<u8>,
         valid_util_block: u64,
         need_package: bool,
     ) -> Result<()> {
-        Self::save_valid_until_block(hash_str.clone(), valid_util_block)?;
-        Self::enqueue_tx(hash_str, tx, need_package)
+        Self::save_valid_until_block(con, hash_str.clone(), valid_util_block)?;
+        Self::enqueue_tx(con, hash_str, tx, need_package)?;
+        Ok(())
     }
 
-    async fn load_or_query<F, T>(key: String, expire_time: usize, f: F) -> Result<Value>
-    where
-        T: Display,
-        F: Send + Future<Output = Result<T>>,
-    {
-        Self::load_or_query_obj(key, expire_time, f, false).await
-    }
-
-    async fn load_or_query_obj<F, T>(
+    async fn load_or_query_array_like<F, T>(
+        con: &mut Connection,
         key: String,
         expire_time: usize,
         f: F,
-        is_obj: bool,
     ) -> Result<Value>
     where
-        T: Display,
+        T: Display + ArrayLike,
         F: Send + Future<Output = Result<T>>,
     {
-        if Self::exist_val(key.clone())? {
-            let result = Self::load_val(key, expire_time)?;
-            let content = result.as_str();
-            match serde_json::from_str(content) {
-                Ok(json) => Ok(json),
-                Err(e) => {
-                    if is_obj {
-                        Err(anyhow!(e))
-                    } else {
-                        Ok(json!(content))
-                    }
-                }
-            }
+        if Self::exist_val(con, key.clone())? {
+            let result: Vec<u8> = Self::load_val(con, key, expire_time)?;
+            let data: T = T::try_from_slice(result.as_slice())?;
+            Ok(data.to_json())
         } else {
             let val: T = f.await?;
-            Self::save_val(key, val.display(), expire_time)?;
+            Self::save_val(con, key, val.to_vec(), expire_time)?;
             Ok(val.to_json())
         }
     }
 
-    fn save_tx_content(tx_hash: String, content: String, expire_time: usize) -> Result<()> {
-        Self::set_ex(key(TX.to_string(), tx_hash), content, expire_time)?;
+    async fn load_or_query_proto<F, T>(
+        con: &mut Connection,
+        key: String,
+        expire_time: usize,
+        f: F,
+    ) -> Result<Value>
+    where
+        T: Display + prost::Message + Default,
+        F: Send + Future<Output = Result<T>>,
+    {
+        if Self::exist_val(con, key.clone())? {
+            let result: Vec<u8> = Self::load_val(con, key, expire_time)?;
+            let data: T = Message::decode(result.as_slice())?;
+            Ok(data.to_json())
+        } else {
+            let val: T = f.await?;
+            let mut val_bytes = Vec::with_capacity(val.encoded_len());
+            val.encode(&mut val_bytes)
+                .expect("encode system config failed");
+            Self::save_val(con, key, val_bytes, expire_time)?;
+            Ok(val.to_json())
+        }
+    }
+
+    fn save_tx_content(
+        con: &mut Connection,
+        tx_hash: String,
+        content: String,
+        expire_time: usize,
+    ) -> Result<()> {
+        Self::set_ex(con, key(TX.to_string(), tx_hash), content, expire_time)?;
         Ok(())
     }
 
-    fn save_receipt_content(tx_hash: String, content: String, expire_time: usize) -> Result<()> {
-        Self::set_ex(key(RECEIPT.to_string(), tx_hash), content, expire_time)?;
+    fn save_receipt_content(
+        con: &mut Connection,
+        tx_hash: String,
+        content: String,
+        expire_time: usize,
+    ) -> Result<()> {
+        Self::set_ex(con, key(RECEIPT.to_string(), tx_hash), content, expire_time)?;
         Ok(())
     }
 
-    fn save_error(hash: String, err_str: String, expire_time: usize) -> Result<()> {
-        Self::save_tx_content(hash.clone(), err_str.clone(), expire_time)?;
-        Self::save_receipt_content(hash, err_str, expire_time)
+    fn save_error(
+        con: &mut Connection,
+        hash: String,
+        err_str: String,
+        expire_time: usize,
+    ) -> Result<()> {
+        Self::save_tx_content(con, hash.clone(), err_str.clone(), expire_time)?;
+        Self::save_receipt_content(con, hash, err_str, expire_time)
     }
 
-    fn clean_up_expired_by_key(expired_key: String) -> Result<String> {
-        if hexists(evict_to_rough_time(), expired_key.clone())? {
-            let key = hget::<String>(evict_to_rough_time(), expired_key.clone())?;
-            Self::clean_up_expired(key, expired_key.clone())?;
+    fn clean_up_expired_by_key(con: &mut Connection, expired_key: String) -> Result<String> {
+        if hexists(con, evict_to_rough_time(), expired_key.clone())? {
+            let key = hget::<String>(con, evict_to_rough_time(), expired_key.clone())?;
+            Self::clean_up_expired(con, key, expired_key.clone())?;
         }
         Ok(expired_key)
     }
 
     fn set_ex<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+        con: &mut Connection,
         key: String,
         val: T,
         seconds: usize,
     ) -> Result<String> {
-        if exists(key.clone())? {
-            Self::update_expire(key.clone(), seconds)?;
+        if exists(con, key.clone())? {
+            Self::update_expire(con, key.clone(), seconds)?;
         } else {
-            Self::create_expire(key.clone(), seconds)?;
+            Self::create_expire(con, key.clone(), seconds)?;
         }
-        let result = crate::redis::set_ex(key, val, seconds)?;
+        let result = crate::redis::set_ex(con, key, val, seconds)?;
         Ok(result)
     }
 
-    fn expire(key: String, seconds: usize) -> Result<u64> {
-        Self::update_expire(key.clone(), seconds)?;
-        let result = crate::redis::expire(key, seconds)?;
+    fn expire(con: &mut Connection, key: String, seconds: usize) -> Result<u64> {
+        Self::update_expire(con, key.clone(), seconds)?;
+        let result = crate::redis::expire(con, key, seconds)?;
         Ok(result)
     }
 
-    fn clean_up_expired(key: String, member: String) -> Result<()> {
-        Self::delete_expire(key, member)
+    fn clean_up_expired(con: &mut Connection, key: String, member: String) -> Result<()> {
+        Self::delete_expire(con, key, member)
     }
 
-    fn clean_up_packaged_txs(hash_list: Vec<String>) -> Result<()> {
+    fn clean_up_packaged_txs(con: &mut Connection, hash_list: Vec<String>) -> Result<()> {
         for hash in hash_list {
-            zrem(pack_uncommitted_tx_key(), hash)?;
+            zrem(con, pack_uncommitted_tx_key(), hash)?;
         }
         Ok(())
     }
 
-    async fn commit(timing_batch: isize, expire_time: usize) -> Result<()> {
-        let members = CacheManager::uncommitted_txs(timing_batch)?;
+    async fn commit(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()> {
+        let members = CacheManager::uncommitted_txs(con, timing_batch)?;
         for (tx_hash, score) in members {
-            let tx = Self::original_tx(tx_hash.clone())?;
+            let tx = Self::original_tx(con, tx_hash.clone())?;
             let decoded: RawTransaction = Message::decode(tx.as_slice())?;
             match controller().send_raw(decoded.clone()).await {
                 Ok(data) => {
-                    Self::commit_tx(tx_hash.clone(), score)?;
+                    Self::commit_tx(con, tx_hash.clone(), score)?;
                     let hash_str = hex_without_0x(&data);
                     info!("commit tx success, hash: {}", hash_str);
                 }
@@ -721,8 +831,8 @@ impl CacheBehavior for CacheManager {
                         empty.as_slice()
                     };
                     let hash = hex_without_0x(hash).to_string();
-                    Self::save_error(hash.clone(), format!("{e}"), expire_time * 5)?;
-                    Self::clean_up_tx(hash.clone())?;
+                    Self::save_error(con, hash.clone(), format!("{e}"), expire_time * 5)?;
+                    Self::clean_up_tx(con, hash.clone())?;
                     warn!("commit tx fail, hash: {}", hash);
                 }
             }
@@ -730,8 +840,8 @@ impl CacheBehavior for CacheManager {
         Ok(())
     }
 
-    async fn check(timing_batch: isize, expire_time: usize) -> Result<()> {
-        let members = CacheManager::committed_txs(timing_batch)?;
+    async fn check(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()> {
+        let members = CacheManager::committed_txs(con, timing_batch)?;
         for (tx_hash, _) in members {
             let hash = parse_hash(tx_hash.clone().as_str())?;
             let (receipt, expire_time, is_ok) = match evm().get_receipt(hash).await {
@@ -744,10 +854,10 @@ impl CacheBehavior for CacheManager {
                     (format!("{e}"), expire_time * 5, false)
                 }
             };
-            CacheManager::save_receipt_content(tx_hash.clone(), receipt, expire_time)?;
+            CacheManager::save_receipt_content(con, tx_hash.clone(), receipt, expire_time)?;
             if is_ok {
-                if Self::is_packaged_tx(tx_hash.clone())? {
-                    let raw_tx = Self::original_tx(tx_hash.clone())?;
+                if Self::is_packaged_tx(con, tx_hash.clone())? {
+                    let raw_tx = Self::original_tx(con, tx_hash.clone())?;
                     let raw_tx: RawTransaction = Message::decode(raw_tx.as_slice())?;
                     if let Some(Tx::NormalTx(normal_tx)) = raw_tx.tx {
                         if let Some(transaction) = normal_tx.transaction {
@@ -759,11 +869,11 @@ impl CacheBehavior for CacheManager {
                             header
                                 .encode(&mut block_header_bytes)
                                 .expect("encode block header failed");
-                            let maybe: MaybeLocked = BlockContext::current_account()?;
+                            let maybe: MaybeLocked = BlockContext::current_account(con)?;
                             let account = maybe.unlocked()?;
                             let block_hash = account.hash(block_header_bytes.as_slice());
-                            BlockContext::step_next(block_hash)?;
-                            CacheManager::package(timing_batch, expire_time).await?;
+                            BlockContext::step_next(con, block_hash)?;
+                            CacheManager::package(con, timing_batch, expire_time).await?;
                         }
                     }
                 }
@@ -778,36 +888,38 @@ impl CacheBehavior for CacheManager {
                     }
                 };
 
-                CacheManager::save_tx_content(tx_hash.clone(), tx, expire_time)?;
-                CacheManager::try_clean_contract_data(tx_hash.clone())?;
-                CacheManager::clean_up_tx(tx_hash.clone())?;
+                CacheManager::save_tx_content(con, tx_hash.clone(), tx, expire_time)?;
+                CacheManager::try_clean_contract_data(con, tx_hash.clone())?;
+                CacheManager::clean_up_tx(con, tx_hash.clone())?;
 
                 continue;
             }
-            if check_if_timeout(tx_hash.clone()).await? {
-                if Self::is_packaged_tx(tx_hash.clone())? {
-                    let tx = Self::original_tx(tx_hash.clone())?;
+            if check_if_timeout(con, tx_hash.clone()).await? {
+                if Self::is_packaged_tx(con, tx_hash.clone())? {
+                    let tx = Self::original_tx(con, tx_hash.clone())?;
                     let decoded: RawTransaction = Message::decode(tx.as_slice())?;
                     if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
                         let package_data =
                             normal_tx.transaction.expect("get transaction failed!").data;
                         let decoded_package = deserialize::<Package>(package_data.as_slice())?;
-                        let maybe: MaybeLocked = BlockContext::current_account()?;
+                        let maybe: MaybeLocked = BlockContext::current_account(con)?;
                         let account = maybe.unlocked()?;
                         let new_package = decoded_package.to_packaged_tx(*account.address())?;
+                        let raw_tx = new_package.to(con, account, evm()).await?;
                         controller()
-                            .send_raw_tx(account, new_package.to(account, evm()).await?, false)
+                            .send_raw_tx(con, account, raw_tx, false)
                             .await?;
                         warn!("repackage batch: {}.", decoded_package.batch_number);
-                        hdel(hash_to_block_number(), tx_hash.clone())?;
+                        hdel(con, hash_to_block_number(), tx_hash.clone())?;
                     }
                 } else {
                     CacheManager::save_error(
+                        con,
                         tx_hash.clone(),
                         "timeout".to_string(),
                         expire_time * 5,
                     )?;
-                    CacheManager::clean_up_tx(tx_hash.clone())?;
+                    CacheManager::clean_up_tx(con, tx_hash.clone())?;
                     warn!("retry -> get receipt, timeout hash: {}", tx_hash);
                 }
             }
@@ -815,21 +927,21 @@ impl CacheBehavior for CacheManager {
         Ok(())
     }
 
-    async fn try_lazy_evict() -> Result<()> {
+    async fn try_lazy_evict(con: &mut Connection) -> Result<()> {
         let key = current_clean_up_key();
-        if exists(key.clone())? {
-            for member in smembers::<String>(key.clone())? {
-                if get::<String>(member.clone()).is_err() {
+        if exists(con, key.clone())? {
+            for member in smembers::<String>(con, key.clone())? {
+                if get::<String>(con, member.clone()).is_err() {
                     info!("lazy evict key: {}", member);
                 }
-                Self::clean_up_expired(key.clone(), member.clone())?;
+                Self::clean_up_expired(con, key.clone(), member.clone())?;
             }
         }
         Ok(())
     }
 
-    async fn sub_evict_event() -> Result<()> {
-        psubscribe(EXPIRED_KEY_EVENT_AT_ALL_DB.to_string(), |msg| {
+    async fn sub_evict_event(redis_con: &mut Connection) -> Result<()> {
+        psubscribe(redis_con, EXPIRED_KEY_EVENT_AT_ALL_DB.to_string(), |msg| {
             let expired_key = match msg.get_payload::<String>() {
                 Ok(key) => {
                     if key.starts_with(&val_prefix()) {
@@ -843,7 +955,8 @@ impl CacheBehavior for CacheManager {
                     return ControlFlow::Continue;
                 }
             };
-            match CacheManager::clean_up_expired_by_key(expired_key) {
+            let con = &mut con();
+            match CacheManager::clean_up_expired_by_key(con, expired_key) {
                 Ok(expired_key) => info!("evict expired key: {}", expired_key),
                 Err(e) => warn!("evict expired failed: {}", e),
             }
@@ -852,25 +965,46 @@ impl CacheBehavior for CacheManager {
         Ok(())
     }
 
-    async fn set_up() -> Result<()> {
+    async fn sub_expire_event(redis_con: &mut Connection) -> Result<()> {
+        psubscribe(redis_con, expire_channel(), |msg| {
+            match msg.get_payload::<String>() {
+                Ok(data) => {
+                    let expire: Expire = serde_json::from_str(data.as_str()).unwrap();
+                    let key = expire.clone().key;
+                    let expire_time = expire.expire_time;
+                    println!("receive event, key: {key}, expire_time: {expire_time}");
+                    let con = &mut con();
+                    Self::expire(con, key, expire_time).unwrap();
+                }
+                Err(e) => {
+                    warn!("subscribe msg has none payload: {}", e);
+                    return ControlFlow::Continue;
+                }
+            };
+            ControlFlow::Continue
+        })?;
+        Ok(())
+    }
+
+    async fn set_up(con: &mut Connection) -> Result<()> {
         for item in [
             CITA_CLOUD_BLOCK_NUMBER.to_string(),
             SYSTEM_CONFIG.to_string(),
         ] {
             let member = key_without_param(item);
-            delete(member.clone())?;
-            if Self::clean_up_expired_by_key(member.clone()).is_ok() {
+            delete(con, member.clone())?;
+            if Self::clean_up_expired_by_key(con, member.clone()).is_ok() {
                 info!("set up -> reset key: {} success", member);
             }
         }
         let current = current_rough_time();
-        for key in keys::<String>(clean_up_pattern())? {
+        for key in keys::<String>(con, clean_up_pattern())? {
             let rough_time_str: &str = &key[clean_up_prefix().len()..];
             if let Ok(rough_time) = rough_time_str.parse::<u64>() {
                 if rough_time < current {
-                    if let Ok(members) = smembers::<String>(key) {
+                    if let Ok(members) = smembers::<String>(con, key) {
                         for member in members {
-                            if Self::clean_up_expired_by_key(member.clone()).is_ok() {
+                            if Self::clean_up_expired_by_key(con, member.clone()).is_ok() {
                                 info!("set up -> clean up expired key: {} success", member);
                             }
                         }

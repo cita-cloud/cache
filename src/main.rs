@@ -25,15 +25,15 @@ use crate::cita_cloud::evm::EvmClient;
 use crate::cita_cloud::executor::ExecutorClient;
 use crate::common::cache_log::LOGGER;
 use crate::common::constant::{
-    CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, LOCAL_EVM_CLIENT,
-    LOCAL_EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
+    CACHE_CONFIG, CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, KEY_PAIR,
+    LOCAL_EVM_CLIENT, LOCAL_EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
 };
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
 use crate::core::context::Context;
 use crate::redis::{
-    delete, exists, get, hdel, hget, hset, incr_one, keys, pool, psubscribe, smembers, srem, zadd,
-    zrange_withscores, zrem,
+    con, delete, exists, get, hdel, hget, hset, incr_one, keys, pool, psubscribe, smembers, srem,
+    zadd, zrange_withscores, zrem,
 };
 use ::log::LevelFilter;
 use anyhow::Result;
@@ -41,7 +41,7 @@ use log::{set_logger, set_max_level};
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, receipt, receipt_inner,
-    system_config, tx,
+    system_config, tx, version,
 };
 use rest_api::post::{call, change_role, create, send_tx};
 use rocket::config::LogLevel;
@@ -56,8 +56,8 @@ use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::core::schedule_task::{
-    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PollTxsTask,
-    ReplayTask, ScheduleTask, UsefulParamTask,
+    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PackTxTask,
+    PollTxsTask, ReplayTask, ScheduleTask, UsefulParamTask,
 };
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
@@ -91,6 +91,7 @@ fn rocket(figment: Figment) -> Rocket<Build> {
                 create,
                 send_tx,
                 change_role,
+                version,
             ],
         )
         .register("/", catchers![uri_not_found])
@@ -173,6 +174,9 @@ async fn set_param(
     isize,
     usize,
 ) {
+    if let Err(e) = CACHE_CONFIG.set(config.clone()) {
+        panic!("store cache config error: {e:?}");
+    }
     let ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient> = Context::new(
         config.controller_addr.unwrap_or_default(),
         config.executor_addr.unwrap_or_default(),
@@ -201,7 +205,6 @@ async fn set_param(
             panic!("store crypto client error: {e:?}");
         }
     }
-
     if let Err(e) = ROUGH_INTERNAL.set(config.rough_internal.unwrap_or_default()) {
         panic!("set rough internal fail: {e:?}")
     }
@@ -229,23 +232,35 @@ async fn main() {
     }
     info!("cache config: {}", config.display());
     let (ctx, timing_internal_sec, timing_batch, expire_time) = set_param(config.clone()).await;
-    match BlockContext::set_up(expire_time, config.crypto_type, config.is_master).await {
+    let con = &mut con();
+    match BlockContext::set_up(con, expire_time, config.crypto_type, config.is_master).await {
         Ok(_) => info!("block context set up success!"),
         Err(e) => warn!("block context set up fail: {}", e),
     }
-    match CacheManager::set_up().await {
+    match CacheManager::set_up(con).await {
         Ok(_) => info!("cache manager set up success!"),
         Err(e) => warn!("cache manager set up fail: {}", e),
     }
-    let seconds = timing_internal_sec * 1000;
-    tokio::spawn(CommitTxTask::schedule(seconds, timing_batch, expire_time));
+
+    // let seconds = timing_internal_sec * 1000;
+    tokio::spawn(PackTxTask::schedule(
+        timing_internal_sec,
+        timing_batch,
+        expire_time,
+    ));
+
+    tokio::spawn(CommitTxTask::schedule(
+        timing_internal_sec,
+        timing_batch,
+        expire_time,
+    ));
     tokio::spawn(CheckTxTask::schedule(
-        2 * seconds,
+        2 * timing_internal_sec,
         timing_batch,
         expire_time,
     ));
     tokio::spawn(EvictExpiredKeyTask::schedule(
-        seconds * 10,
+        timing_internal_sec * 10,
         timing_batch,
         expire_time,
     ));
@@ -254,14 +269,18 @@ async fn main() {
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(ReplayTask::schedule(seconds, timing_batch, expire_time));
+    tokio::spawn(ReplayTask::schedule(
+        timing_internal_sec,
+        timing_batch,
+        expire_time,
+    ));
     tokio::spawn(LazyEvictExpiredKeyTask::schedule(
-        seconds * 2,
+        timing_internal_sec * 2,
         timing_batch,
         expire_time,
     ));
     tokio::spawn(UsefulParamTask::schedule(
-        seconds,
+        timing_internal_sec,
         timing_batch,
         expire_time,
     ));

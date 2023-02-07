@@ -40,13 +40,15 @@ impl log::Log for CacheLogger {
                     Paint::cyan(thread::current().id()),
                     Paint::red(record.args()).wrap()
                 ),
-                Level::Warn => println!(
-                    "[{}] [{}] [{:?}] {}",
-                    Paint::yellow(record.level()).wrap(),
-                    current_time(),
-                    Paint::cyan(thread::current().id()),
-                    Paint::yellow(record.args()).wrap()
-                ),
+                Level::Warn => {
+                    println!(
+                        "[{}] [{}] [{:?}] {}",
+                        Paint::yellow(record.level()).wrap(),
+                        current_time(),
+                        Paint::cyan(thread::current().id()),
+                        Paint::yellow(record.args()).wrap()
+                    )
+                }
                 Level::Info => println!(
                     "[{}] [{}] [{:?}] {}",
                     Paint::green(record.level()).wrap(),

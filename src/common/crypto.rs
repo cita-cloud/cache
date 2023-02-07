@@ -13,7 +13,7 @@
 // limitations under the License.
 
 mod eth;
-mod sm;
+pub mod sm;
 
 use anyhow::Context;
 use anyhow::Result;

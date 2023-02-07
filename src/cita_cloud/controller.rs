@@ -21,6 +21,7 @@ use prost::Message;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::util::hex_without_0x;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
+use crate::redis::Connection;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -289,6 +290,7 @@ pub trait SignerBehaviour {
 pub trait TransactionSenderBehaviour {
     async fn send_raw_tx<S>(
         &self,
+        con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
         need_package: bool,
@@ -324,6 +326,7 @@ where
 {
     async fn send_raw_tx<S>(
         &self,
+        con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
         need_package: bool,
@@ -334,6 +337,14 @@ where
         let valid_until_block = raw_tx.valid_until_block;
         let mut buf = vec![];
         let raw = signer.sign_raw_tx(raw_tx).await;
+        // let tx_bytes = {
+        //     let mut buf = Vec::with_capacity(raw_tx.encoded_len());
+        //     raw_tx.encode(&mut buf)?;
+        //     buf
+        // };
+        // let hash = signer.hash(tx_bytes.as_slice());
+        // let raw = signer.sign(tx_bytes.as_slice());
+
         let empty = Vec::new();
         let hash = match raw.tx {
             Some(Tx::NormalTx(ref normal_tx)) => &normal_tx.transaction_hash,
@@ -341,7 +352,13 @@ where
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
-        CacheManager::enqueue(hex_without_0x(hash), buf, valid_until_block, need_package)?;
+        CacheManager::enqueue(
+            con,
+            hex_without_0x(hash),
+            buf,
+            valid_until_block,
+            need_package,
+        )?;
         Ok(Hash::try_from_slice(hash)?)
     }
 
