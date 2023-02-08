@@ -19,7 +19,7 @@ use anyhow::Result;
 use prost::Message;
 
 use crate::common::crypto::{ArrayLike, Hash};
-use crate::common::util::hex_without_0x;
+use crate::common::util::{hex_without_0x, timestamp};
 use crate::core::key_manager::{CacheBehavior, CacheManager};
 use crate::redis::Connection;
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
@@ -334,9 +334,12 @@ where
     where
         S: SignerBehaviour + Send + Sync,
     {
+        let first = timestamp();
         let valid_until_block = raw_tx.valid_until_block;
         let mut buf = vec![];
         let raw = signer.sign_raw_tx(raw_tx).await;
+        let second = timestamp();
+        warn!("sign-raw-tx cost {} ms!", second - first);
         // let tx_bytes = {
         //     let mut buf = Vec::with_capacity(raw_tx.encoded_len());
         //     raw_tx.encode(&mut buf)?;
@@ -352,6 +355,8 @@ where
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
+        let third = timestamp();
+        warn!("encode-to-buf cost {} ms!", third - second);
         CacheManager::enqueue(
             con,
             hex_without_0x(hash),
@@ -359,6 +364,7 @@ where
             valid_until_block,
             need_package,
         )?;
+        warn!("enqueue-raw-tx cost {} ms!", timestamp() - third);
         Ok(Hash::try_from_slice(hash)?)
     }
 

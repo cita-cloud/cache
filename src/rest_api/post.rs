@@ -21,7 +21,9 @@ use crate::cita_cloud::wallet::{MaybeLocked, MultiCryptoAccount};
 use crate::common::context::BlockContext;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
-use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
+use crate::common::util::{
+    hex_without_0x, parse_addr, parse_data, parse_value, remove_0x, timestamp,
+};
 use crate::core::context::Context;
 use crate::core::key_manager::{contract_key, CacheBehavior, CacheManager};
 use crate::redis::Connection;
@@ -200,11 +202,17 @@ impl ToTx for SendTx {
         _account: &MultiCryptoAccount,
         _evm: EvmClient,
     ) -> Result<CloudNormalTransaction> {
+        let first = timestamp();
         let current = BlockContext::current_cita_height(con)?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
+        let second = timestamp();
+        warn!("get-current-height cost {} ms!", second - first);
+
         let to = parse_addr(self.to.clone().as_str())?;
         let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
+        let third = timestamp();
+        warn!("parse-data cost {} ms!", third - second);
 
         // let quota = self
         //     .estimate_quota(
@@ -217,9 +225,12 @@ impl ToTx for SendTx {
         let quota = 300000;
 
         let system_config = BlockContext::system_config(con)?;
+        let forth = timestamp();
+        warn!("get-system-config cost {} ms!", forth - third);
         let version = system_config.version;
         let chain_id = system_config.chain_id;
         let nonce = rand::random::<u64>().to_string();
+        warn!("get-nonce cost {} ms!", timestamp() - forth);
         Ok(CloudNormalTransaction {
             version,
             to: to.to_vec(),
@@ -314,10 +325,14 @@ async fn create_tx(
 ) -> Result<Hash> {
     let maybe: MaybeLocked = BlockContext::current_account(con)?;
     let account = maybe.unlocked()?;
+    let first = timestamp();
     let tx = send_tx.to(con, account, evm.clone()).await?;
+    let second = timestamp();
+    warn!("create-tx cost {} ms!", second - first);
     let r = controller
         .send_raw_tx(con, account, tx, send_tx.local_execute)
         .await?;
+    warn!("send-tx cost {} ms!", timestamp() - second);
     Ok(r)
 }
 

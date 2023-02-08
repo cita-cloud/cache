@@ -692,8 +692,12 @@ impl CacheBehavior for CacheManager {
         valid_util_block: u64,
         need_package: bool,
     ) -> Result<()> {
+        let first = timestamp();
         Self::save_valid_until_block(con, hash_str.clone(), valid_util_block)?;
+        let second = timestamp();
+        warn!("save-vnb cost {} ms!", second - first);
         Self::enqueue_tx(con, hash_str, tx, need_package)?;
+        warn!("enqueue-tx cost {} ms!", timestamp() - second);
         Ok(())
     }
 
