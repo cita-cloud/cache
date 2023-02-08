@@ -393,13 +393,18 @@ impl TxBehavior for CacheManager {
         tx: Vec<u8>,
         need_package: bool,
     ) -> Result<()> {
+        let first = timestamp();
         let key = if need_package {
             pack_uncommitted_tx_key()
         } else {
             uncommitted_tx_key()
         };
+
         zadd(con, key, hash_str.clone(), timestamp())?;
+        let second = timestamp();
+        warn!("zadd-tx cost {} ms!", second - first);
         hset(con, hash_to_tx(), hash_str, tx)?;
+        warn!("hset-tx cost {} ms!", timestamp() - second);
         Ok(())
     }
 

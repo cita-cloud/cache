@@ -55,7 +55,10 @@ pub fn remove_0x(s: &str) -> &str {
 }
 
 pub fn parse_data(s: &str) -> Result<Vec<u8>> {
-    hex::decode(remove_0x(s)).context("invalid hex input")
+    let first = timestamp();
+    let r = hex::decode(remove_0x(s)).context("invalid hex input");
+    warn!("parse_data cost {} ms!", timestamp() - first);
+    r
 }
 
 pub fn parse_addr(s: &str) -> Result<Address> {

@@ -364,8 +364,11 @@ where
             valid_until_block,
             need_package,
         )?;
-        warn!("enqueue-raw-tx cost {} ms!", timestamp() - third);
-        Ok(Hash::try_from_slice(hash)?)
+        let forth = timestamp();
+        warn!("enqueue-raw-tx cost {} ms!", forth - third);
+        let r = Hash::try_from_slice(hash)?;
+        warn!("parse-hash cost {} ms!", timestamp() - forth);
+        Ok(r)
     }
 
     async fn send_raw_utxo<S>(&self, signer: &S, raw_utxo: CloudUtxoTransaction) -> Result<Hash>
