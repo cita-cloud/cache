@@ -91,6 +91,6 @@ pub fn config() -> CacheConfig {
     CACHE_CONFIG.get().unwrap().clone()
 }
 
-pub fn keypair() -> KeyPair {
-    KEY_PAIR.get().unwrap().clone()
-}
+// pub fn keypair() -> KeyPair {
+//     KEY_PAIR.get().unwrap().clone()
+// }
