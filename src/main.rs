@@ -108,7 +108,7 @@ pub struct CacheConfig {
     redis_addr: Option<String>,
     timing_internal_sec: Option<u64>,
     timing_batch: Option<u64>,
-    account: String,
+    redis_max_workers: Option<u64>,
     log_level: LogLevel,
     //read cache timeout
     expire_time: Option<u64>,
@@ -129,7 +129,7 @@ impl Default for CacheConfig {
             redis_addr: Some("redis://default:rivtower@127.0.0.1:6379".to_string()),
             timing_internal_sec: Some(1),
             timing_batch: Some(100),
-            account: "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7".to_string(),
+            redis_max_workers: Some(100),
             log_level: LogLevel::Normal,
             expire_time: Some(60),
             rough_internal: Some(10),
@@ -149,7 +149,7 @@ impl Display for CacheConfig {
             "redis_addr": self.redis_addr,
             "timing_internal_sec": self.timing_internal_sec,
             "timing_batch": self.timing_batch,
-            "account": self.account,
+            "redis_max_workers": self.redis_max_workers,
             "log_level": self.log_level,
             "expire_time": self.expire_time,
             "rough_internal": self.rough_internal,
@@ -183,7 +183,7 @@ async fn set_param(
         config.local_executor_addr.unwrap_or_default(),
         config.crypto_addr,
         config.redis_addr.unwrap_or_default(),
-        config.workers,
+        config.redis_max_workers.unwrap_or_default(),
     );
     if let Err(e) = CONTROLLER_CLIENT.set(ctx.controller.clone()) {
         panic!("store controller client error: {e:?}");

@@ -21,10 +21,10 @@ use std::hash::Hash;
 
 // Pool initiation.
 // Call it starting an app and store a pool as a rocket managed state.
-pub fn pool(redis_addr: String, _workers: u32) -> Pool {
+pub fn pool(redis_addr: String, workers: u32) -> Pool {
     let manager = RedisConnectionManager::new(redis_addr).expect("connection manager");
     Pool::builder()
-        .max_size(100)
+        .max_size(workers)
         .min_idle(Some(10))
         .build(manager)
         .expect("db pool")
