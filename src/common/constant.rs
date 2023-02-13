@@ -27,7 +27,7 @@ pub const HASH_TYPE: &str = "hash";
 pub const SET_TYPE: &str = "set";
 pub const ZSET_TYPE: &str = "zset";
 pub const VAL_TYPE: &str = "val";
-pub const EVENT_TYPE: &str = "event";
+pub const STREAM_TYPE: &str = "stream";
 
 pub const ROLLUP_WRITE_ENABLE: &str = "rollup_write_enable";
 
@@ -36,6 +36,9 @@ pub const CURRENT_BATCH_NUMBER: &str = "current_batch_number";
 pub const VALIDATOR_BATCH_NUMBER: &str = "validator_batch_number";
 pub const CURRENT_FAKE_BLOCK_HASH: &str = "current_fake_block_hash";
 pub const PACKAGED_TX: &str = "packaged_tx";
+pub const STREAM_ID: &str = "stream_id";
+pub const ENQUEUE: &str = "enqueue";
+pub const EXPIRE: &str = "expire";
 
 pub const VALIDATE_TX_BUFFER: &str = "validate_tx_hash";
 
@@ -53,7 +56,6 @@ pub const RECEIPT: &str = "receipt";
 pub const TX: &str = "tx";
 pub const CONTRACT_KEY: &str = "contract";
 pub const EXPIRED_KEY_EVENT_AT_ALL_DB: &str = "__keyevent@*__:expired";
-pub const EXPIRE_TYPE: &str = "expire";
 
 pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
 pub static CONTROLLER_CLIENT: OnceCell<ControllerClient> = OnceCell::const_new();

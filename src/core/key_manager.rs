@@ -15,7 +15,7 @@
 use crate::cita_cloud::{controller::ControllerBehaviour, evm::EvmBehaviour};
 use crate::common::constant::*;
 use crate::common::util::{hex_without_0x, parse_hash, timestamp};
-use crate::redis::{hexists, sadd, sismember, smove, ttl, Connection};
+use crate::redis::{hexists, sadd, set, sismember, smove, ttl, xadd, Connection};
 use crate::{
     con, delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
@@ -29,10 +29,13 @@ use crate::cita_cloud::wallet::MaybeLocked;
 use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::package::Package;
 use crate::rest_api::post::ToTx;
-use msgpack_schema::deserialize;
+use msgpack_schema::{deserialize, serialize};
 use prost::Message;
-use r2d2_redis::redis::{ControlFlow, FromRedisValue, ToRedisArgs};
+use r2d2_redis::redis::{Commands, ControlFlow, FromRedisValue, ToRedisArgs, Value as RedisValue};
 use serde_json::Value;
+
+use crate::core::schedule_task::{Enqueue, Expire};
+use r2d2_redis::redis::streams::{StreamReadOptions, StreamReadReply};
 use std::future::Future;
 
 fn uncommitted_tx_key() -> String {
@@ -79,10 +82,6 @@ fn evict_to_rough_time() -> String {
     format!("{KEY_PREFIX}:{HASH_TYPE}:{EVICT_TO_ROUGH_TIME}")
 }
 
-pub fn expire_channel() -> String {
-    format!("{KEY_PREFIX}:{EVENT_TYPE}:{EXPIRE_TYPE}")
-}
-
 fn val_prefix() -> String {
     format!("{KEY_PREFIX}:{VAL_TYPE}")
 }
@@ -112,6 +111,18 @@ pub fn system_config_key() -> String {
 
 pub fn admin_account_key() -> String {
     format!("{KEY_PREFIX}:{VAL_TYPE}:{ADMIN_ACCOUNT}")
+}
+
+pub fn stream_id_key(name: String) -> String {
+    format!("{KEY_PREFIX}:{VAL_TYPE}:{STREAM_ID}:{name}")
+}
+
+pub fn stream_key(name: String) -> String {
+    format!("{KEY_PREFIX}:{STREAM_TYPE}:{name}")
+}
+
+pub fn stream_key_suffix(mut key: String) -> String {
+    key.split_off(KEY_PREFIX.len() + 1 + STREAM_TYPE.len() + 1)
 }
 
 fn clean_up_pattern() -> String {
@@ -155,13 +166,6 @@ async fn check_if_timeout(con: &mut Connection, tx_hash: String) -> Result<bool>
     let config = controller().get_system_config().await?;
     let valid_until_block = CacheManager::valid_until_block(con, tx_hash)?;
     Ok(valid_until_block <= current || valid_until_block > (current + config.block_limit as u64))
-}
-
-use serde::{Deserialize, Serialize};
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Expire {
-    expire_time: usize,
-    key: String,
 }
 
 #[tonic::async_trait]
@@ -326,7 +330,7 @@ pub trait CacheBehavior:
 
     async fn sub_evict_event(con: &mut Connection) -> Result<()>;
 
-    async fn sub_expire_event(con: &mut Connection) -> Result<()>;
+    async fn sub_xadd_stream(con: &mut Connection, time_internal: u64) -> Result<()>;
 
     async fn set_up(con: &mut Connection) -> Result<()>;
 }
@@ -393,18 +397,13 @@ impl TxBehavior for CacheManager {
         tx: Vec<u8>,
         need_package: bool,
     ) -> Result<()> {
-        let first = timestamp();
         let key = if need_package {
             pack_uncommitted_tx_key()
         } else {
             uncommitted_tx_key()
         };
-
         zadd(con, key, hash_str.clone(), timestamp())?;
-        let second = timestamp();
-        warn!("zadd-tx cost {} ms!", second - first);
         hset(con, hash_to_tx(), hash_str, tx)?;
-        warn!("hset-tx cost {} ms!", timestamp() - second);
         Ok(())
     }
 
@@ -482,13 +481,15 @@ impl ValBehavior for CacheManager {
         key: String,
         expire_time: usize,
     ) -> Result<T> {
-        Self::expire(con, key.clone(), expire_time)?;
-        let val = get(con, key)?;
-        // let expire = Expire {
-        //     expire_time, key
-        // };
-        // publish(expire_channel(), serde_json::to_string(&expire)?)?;
-        Ok(val)
+        let data = serialize(Expire::new(key.clone(), expire_time as u64));
+        let list = vec![("data".to_string(), data.as_slice())];
+        xadd::<&[u8]>(
+            con,
+            stream_key(EXPIRE.to_string()),
+            "*".to_string(),
+            list.as_slice(),
+        )?;
+        Ok(get(con, key)?)
     }
 }
 
@@ -697,12 +698,8 @@ impl CacheBehavior for CacheManager {
         valid_util_block: u64,
         need_package: bool,
     ) -> Result<()> {
-        let first = timestamp();
         Self::save_valid_until_block(con, hash_str.clone(), valid_util_block)?;
-        let second = timestamp();
-        warn!("save-vnb cost {} ms!", second - first);
         Self::enqueue_tx(con, hash_str, tx, need_package)?;
-        warn!("enqueue-tx cost {} ms!", timestamp() - second);
         Ok(())
     }
 
@@ -974,24 +971,62 @@ impl CacheBehavior for CacheManager {
         Ok(())
     }
 
-    async fn sub_expire_event(redis_con: &mut Connection) -> Result<()> {
-        psubscribe(redis_con, expire_channel(), |msg| {
-            match msg.get_payload::<String>() {
-                Ok(data) => {
-                    let expire: Expire = serde_json::from_str(data.as_str()).unwrap();
-                    let key = expire.clone().key;
-                    let expire_time = expire.expire_time;
-                    println!("receive event, key: {key}, expire_time: {expire_time}");
-                    let con = &mut con();
-                    Self::expire(con, key, expire_time).unwrap();
+    async fn sub_xadd_stream(redis_con: &mut Connection, time_internal: u64) -> Result<()> {
+        let (enqueue_id, expire_id) = (
+            get::<String>(redis_con, stream_id_key(ENQUEUE.to_string())).unwrap_or("0".to_string()),
+            get::<String>(redis_con, stream_id_key(EXPIRE.to_string())).unwrap_or("0".to_string()),
+        );
+        let opts = StreamReadOptions::default().block(time_internal as usize * 1000);
+        let results: StreamReadReply = redis_con.xread_options(
+            &[
+                stream_key(ENQUEUE.to_string()),
+                stream_key(EXPIRE.to_string()),
+            ],
+            &[enqueue_id, expire_id],
+            opts,
+        )?;
+        for item in results.keys {
+            match stream_key_suffix(item.key).as_str() {
+                ENQUEUE => {
+                    for id in item.ids {
+                        info!("receive enqueue msg, id: {}", id.id);
+                        let map = id.map;
+                        let (hash, tx, vub, need) = match map.get("data") {
+                            Some(RedisValue::Data(data)) => {
+                                let enqueue = deserialize::<Enqueue>(data.as_slice())?;
+                                (
+                                    enqueue.hash,
+                                    enqueue.tx,
+                                    enqueue.valid_util_block,
+                                    enqueue.need_package,
+                                )
+                            }
+                            _ => continue,
+                        };
+
+                        Self::enqueue(redis_con, hash, tx, vub, need)?;
+                        set(redis_con, stream_id_key(ENQUEUE.to_string()), id.id)?;
+                    }
                 }
-                Err(e) => {
-                    warn!("subscribe msg has none payload: {}", e);
-                    return ControlFlow::Continue;
+                EXPIRE => {
+                    for id in item.ids {
+                        info!("receive enqueue msg, id: {}", id.id);
+                        let map = id.map;
+                        let (key, expire_time) = match map.get("data") {
+                            Some(RedisValue::Data(data)) => {
+                                let expire = deserialize::<Expire>(data.as_slice())?;
+                                (expire.key, expire.expire_time)
+                            }
+                            _ => continue,
+                        };
+
+                        Self::expire(redis_con, key, expire_time as usize)?;
+                        set(redis_con, stream_id_key(EXPIRE.to_string()), id.id)?;
+                    }
                 }
-            };
-            ControlFlow::Continue
-        })?;
+                _ => {}
+            }
+        }
         Ok(())
     }
 

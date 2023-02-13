@@ -106,7 +106,6 @@ pub struct LazyEvictExpiredKeyTask;
 #[tonic::async_trait]
 impl ScheduleTask for LazyEvictExpiredKeyTask {
     async fn task(con: &mut Connection, _: isize, _: usize) -> Result<()> {
-        CacheManager::sub_expire_event(con).await?;
         CacheManager::try_lazy_evict(con).await
     }
 
@@ -184,5 +183,69 @@ impl ScheduleTask for ReplayTask {
 
     fn enable(con: &mut Connection) -> Result<bool> {
         Ok(!BlockContext::is_master(con)?)
+    }
+}
+
+use msgpack_schema::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Enqueue {
+    #[tag = 0]
+    pub hash: String,
+    #[tag = 1]
+    pub tx: Vec<u8>,
+    #[tag = 2]
+    pub valid_util_block: u64,
+    #[tag = 3]
+    pub need_package: bool,
+}
+
+impl Enqueue {
+    pub fn new(hash: String, tx: Vec<u8>, valid_util_block: u64, need_package: bool) -> Self {
+        Self {
+            hash,
+            tx,
+            valid_util_block,
+            need_package,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Expire {
+    #[tag = 0]
+    pub key: String,
+    #[tag = 1]
+    pub expire_time: u64,
+}
+
+impl Expire {
+    pub fn new(key: String, expire_time: u64) -> Self {
+        Self { key, expire_time }
+    }
+}
+pub struct XaddTask;
+
+#[tonic::async_trait]
+impl ScheduleTask for XaddTask {
+    async fn task(_con: &mut Connection, _: isize, _: usize) -> Result<()> {
+        Ok(())
+    }
+
+    fn name() -> String {
+        "xadd key".to_string()
+    }
+
+    fn enable(_con: &mut Connection) -> Result<bool> {
+        Ok(true)
+    }
+
+    async fn schedule(time_internal: u64, _timing_batch: isize, _expire_time: usize) {
+        loop {
+            let con = &mut con();
+            if let Err(e) = CacheManager::sub_xadd_stream(con, time_internal).await {
+                warn!("[{} task] enable error: {}", Self::name(), e);
+            }
+        }
     }
 }

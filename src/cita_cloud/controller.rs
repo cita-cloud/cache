@@ -18,10 +18,12 @@ use anyhow::Result;
 
 use prost::Message;
 
+use crate::common::constant::ENQUEUE;
 use crate::common::crypto::{ArrayLike, Hash};
-use crate::common::util::{hex_without_0x, timestamp};
-use crate::core::key_manager::{CacheBehavior, CacheManager};
-use crate::redis::Connection;
+use crate::common::util::hex_without_0x;
+use crate::core::key_manager::stream_key;
+use crate::core::schedule_task::Enqueue;
+use crate::redis::{xadd, Connection};
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -34,6 +36,7 @@ use cita_cloud_proto::{
     controller::rpc_service_client::RpcServiceClient,
     controller::{BlockNumber, Flag, SystemConfig},
 };
+use msgpack_schema::serialize;
 use tokio::sync::OnceCell;
 
 #[derive(Debug, Clone)]
@@ -334,19 +337,9 @@ where
     where
         S: SignerBehaviour + Send + Sync,
     {
-        let first = timestamp();
         let valid_until_block = raw_tx.valid_until_block;
         let mut buf = vec![];
         let raw = signer.sign_raw_tx(raw_tx).await;
-        let second = timestamp();
-        warn!("sign-raw-tx cost {} ms!", second - first);
-        // let tx_bytes = {
-        //     let mut buf = Vec::with_capacity(raw_tx.encoded_len());
-        //     raw_tx.encode(&mut buf)?;
-        //     buf
-        // };
-        // let hash = signer.hash(tx_bytes.as_slice());
-        // let raw = signer.sign(tx_bytes.as_slice());
 
         let empty = Vec::new();
         let hash = match raw.tx {
@@ -355,20 +348,28 @@ where
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
-        let third = timestamp();
-        warn!("encode-to-buf cost {} ms!", third - second);
-        CacheManager::enqueue(
-            con,
+        let data = serialize(Enqueue::new(
             hex_without_0x(hash),
             buf,
             valid_until_block,
             need_package,
+        ));
+        let list = vec![("data".to_string(), data.as_slice())];
+
+        xadd::<&[u8]>(
+            con,
+            stream_key(ENQUEUE.to_string()),
+            "*".to_string(),
+            list.as_slice(),
         )?;
-        let forth = timestamp();
-        warn!("enqueue-raw-tx cost {} ms!", forth - third);
-        let r = Hash::try_from_slice(hash)?;
-        warn!("parse-hash cost {} ms!", timestamp() - forth);
-        Ok(r)
+        // CacheManager::enqueue(
+        //     con,
+        //     hex_without_0x(hash),
+        //     buf,
+        //     valid_until_block,
+        //     need_package,
+        // )?;
+        Ok(Hash::try_from_slice(hash)?)
     }
 
     async fn send_raw_utxo<S>(&self, signer: &S, raw_utxo: CloudUtxoTransaction) -> Result<Hash>

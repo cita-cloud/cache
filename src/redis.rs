@@ -235,6 +235,15 @@ pub fn keys<T: Clone + Default + ToRedisArgs + FromRedisValue>(
     con.keys(pattern)
 }
 
+pub fn xadd<V: ToRedisArgs>(
+    con: &mut Connection,
+    key: String,
+    id: String,
+    items: &[(String, V)],
+) -> Result<String, r2d2_redis::redis::RedisError> {
+    con.xadd::<String, String, String, V, String>(key, id, items)
+}
+
 pub fn psubscribe<F: FnMut(Msg) -> ControlFlow<()>>(
     con: &mut Connection,
     pattern: String,

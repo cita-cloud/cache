@@ -18,7 +18,7 @@ use crate::cita_cloud::controller::ControllerBehaviour;
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::common::crypto::sm::{sm2_generate_secret_key, sm2_sign};
 use crate::common::display::Display;
-use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x, timestamp};
+use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
 use crate::core::context::Context;
 use crate::core::key_manager::{key, CacheBehavior, CacheManager};
 use crate::redis::con;
@@ -39,8 +39,6 @@ params(
 ))]
 pub async fn version(flag: bool) -> Json<CacheResult<Value>> {
     if flag {
-        let first = timestamp();
-
         // let keypair = keypair();
         //
         // keypair
@@ -48,9 +46,6 @@ pub async fn version(flag: bool) -> Json<CacheResult<Value>> {
         //     .expect("sm2 sign failed");
 
         sm2_sign(Hash::default().as_slice(), &sm2_generate_secret_key());
-        println!("sign message cost {} ms!", timestamp() - first);
-        // let con = &mut con();
-        // publish(con, "channel".to_string(), "msg".to_string());
     }
     Json(success(json!(1)))
 }

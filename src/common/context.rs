@@ -80,12 +80,8 @@ impl BlockContext {
     }
 
     pub fn system_config(con: &mut Connection) -> Result<SystemConfig> {
-        let first = timestamp();
         let system_config = get::<Vec<u8>>(con, system_config_key())?;
-        let second = timestamp();
-        warn!("get-system-config-bytes cost {} ms!", second - first);
         let config: SystemConfig = Message::decode(system_config.as_slice())?;
-        warn!("decode-system-config cost {} ms!", timestamp() - second);
         Ok(config)
     }
 
