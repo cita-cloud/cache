@@ -18,7 +18,7 @@ use crate::redis::{con, Connection};
 use crate::LocalBehaviour;
 use anyhow::Result;
 use tokio::time;
-use tokio::time::MissedTickBehavior;
+// use tokio::time::MissedTickBehavior;
 
 #[tonic::async_trait]
 pub trait ScheduleTask {
@@ -29,11 +29,9 @@ pub trait ScheduleTask {
     fn enable(con: &mut Connection) -> Result<bool>;
 
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
-        let mut internal = time::interval(time::Duration::from_secs(time_internal));
-        internal.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut internal = time::interval(time::Duration::from_millis(time_internal));
         loop {
             internal.tick().await;
-            // info!("[{} task] ticked!", Self::name());
             let con = &mut con();
             match Self::enable(con) {
                 Ok(flag) => {
@@ -82,6 +80,25 @@ impl ScheduleTask for PackTxTask {
     fn enable(con: &mut Connection) -> Result<bool> {
         BlockContext::is_master(con)
     }
+
+    async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
+        let mut internal = time::interval(time::Duration::from_secs(time_internal));
+        // internal.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            internal.tick().await;
+            let con = &mut con();
+            match Self::enable(con) {
+                Ok(flag) => {
+                    if flag {
+                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
+                            warn!("[{} task] error: {}", Self::name(), e);
+                        }
+                    }
+                }
+                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
+            }
+        }
+    }
 }
 
 pub struct CheckTxTask;
@@ -98,6 +115,24 @@ impl ScheduleTask for CheckTxTask {
 
     fn enable(con: &mut Connection) -> Result<bool> {
         BlockContext::is_master(con)
+    }
+
+    async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
+        let mut internal = time::interval(time::Duration::from_secs(time_internal));
+        loop {
+            internal.tick().await;
+            let con = &mut con();
+            match Self::enable(con) {
+                Ok(flag) => {
+                    if flag {
+                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
+                            warn!("[{} task] error: {}", Self::name(), e);
+                        }
+                    }
+                }
+                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
+            }
+        }
     }
 }
 
@@ -166,6 +201,24 @@ impl ScheduleTask for PollTxsTask {
 
     fn enable(con: &mut Connection) -> Result<bool> {
         Ok(!BlockContext::is_master(con)?)
+    }
+
+    async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
+        let mut internal = time::interval(time::Duration::from_millis(time_internal));
+        loop {
+            internal.tick().await;
+            let con = &mut con();
+            match Self::enable(con) {
+                Ok(flag) => {
+                    if flag {
+                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
+                            warn!("[{} task] error: {}", Self::name(), e);
+                        }
+                    }
+                }
+                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
+            }
+        }
     }
 }
 
@@ -240,10 +293,10 @@ impl ScheduleTask for XaddTask {
         Ok(true)
     }
 
-    async fn schedule(time_internal: u64, _timing_batch: isize, _expire_time: usize) {
+    async fn schedule(_time_internal: u64, timing_batch: isize, _expire_time: usize) {
         loop {
             let con = &mut con();
-            if let Err(e) = CacheManager::sub_xadd_stream(con, time_internal).await {
+            if let Err(e) = CacheManager::sub_xadd_stream(con, timing_batch as usize).await {
                 warn!("[{} task] enable error: {}", Self::name(), e);
             }
         }

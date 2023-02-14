@@ -330,7 +330,7 @@ pub trait CacheBehavior:
 
     async fn sub_evict_event(con: &mut Connection) -> Result<()>;
 
-    async fn sub_xadd_stream(con: &mut Connection, time_internal: u64) -> Result<()>;
+    async fn sub_xadd_stream(con: &mut Connection, timing_batch: usize) -> Result<()>;
 
     async fn set_up(con: &mut Connection) -> Result<()>;
 }
@@ -521,7 +521,8 @@ impl ContractBehavior for CacheManager {
 impl PackBehavior for CacheManager {
     async fn package(con: &mut Connection, timing_batch: isize, _expire_time: usize) -> Result<()> {
         let members = CacheManager::pack_uncommitted_txs(con, timing_batch)?;
-        if members.is_empty() {
+        let size = members.len();
+        if size == 0 {
             return Ok(());
         }
         let mut tx_list = Vec::new();
@@ -532,7 +533,7 @@ impl PackBehavior for CacheManager {
             tx_list.push(decoded);
             hash_list.push(tx_hash);
         }
-        let batch_number = BlockContext::get_batch_number(con).await?;
+
         let maybe: MaybeLocked = BlockContext::current_account(con)?;
         let account = maybe.unlocked()?;
         let proposer = account.address().to_vec();
@@ -541,6 +542,8 @@ impl PackBehavior for CacheManager {
         if let Ok(res) = local_executor().exec(block.clone()).await {
             if let Some(status) = res.status {
                 if status.code == 0 {
+                    let batch_number = BlockContext::get_batch_number(con).await?;
+
                     for raw_tx in tx_list {
                         Self::try_clean_contract(con, raw_tx)?;
                     }
@@ -551,9 +554,17 @@ impl PackBehavior for CacheManager {
                     let hash = controller()
                         .send_raw_tx(con, account, raw_tx, false)
                         .await?;
-                    Self::clean_up_packaged_txs(con, hash_list)?;
                     Self::tag_tx(con, hex_without_0x(hash.as_slice()))?;
-                    info!("package batch: {}.", batch_number);
+
+                    Self::clean_up_packaged_txs(con, hash_list)?;
+                    let header = block.header.expect("get block header failed");
+                    let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
+                    header
+                        .encode(&mut block_header_bytes)
+                        .expect("encode block header failed");
+                    let block_hash = account.hash(block_header_bytes.as_slice());
+                    BlockContext::step_next(con, block_hash)?;
+                    info!("package batch: {}, txs_num: {}", batch_number, size);
                 }
             }
         }
@@ -830,16 +841,34 @@ impl CacheBehavior for CacheManager {
                     info!("commit tx success, hash: {}", hash_str);
                 }
                 Err(e) => {
-                    let empty = Vec::new();
-                    let hash = if let Some(Tx::NormalTx(ref normal_tx)) = decoded.tx {
-                        &normal_tx.transaction_hash
+                    if Self::is_packaged_tx(con, tx_hash.clone())? {
+                        let tx = Self::original_tx(con, tx_hash.clone())?;
+                        let decoded: RawTransaction = Message::decode(tx.as_slice())?;
+                        if let Some(Tx::NormalTx(normal_tx)) = decoded.tx {
+                            let package_data =
+                                normal_tx.transaction.expect("get transaction failed!").data;
+                            let decoded_package = deserialize::<Package>(package_data.as_slice())?;
+                            let maybe: MaybeLocked = BlockContext::current_account(con)?;
+                            let account = maybe.unlocked()?;
+                            let new_package = decoded_package.to_packaged_tx(*account.address())?;
+                            let raw_tx = new_package.to(con, account, evm()).await?;
+                            let new_hash = controller()
+                                .send_raw_tx(con, account, raw_tx, false)
+                                .await?;
+                            Self::clean_up_tx(con, tx_hash)?;
+                            Self::tag_tx(con, hex_without_0x(new_hash.as_slice()))?;
+                            warn!("repackage batch: {}.", decoded_package.batch_number);
+                        }
                     } else {
-                        empty.as_slice()
-                    };
-                    let hash = hex_without_0x(hash).to_string();
-                    Self::save_error(con, hash.clone(), format!("{e}"), expire_time * 5)?;
-                    Self::clean_up_tx(con, hash.clone())?;
-                    warn!("commit tx fail, hash: {}", hash);
+                        CacheManager::save_error(
+                            con,
+                            tx_hash.clone(),
+                            format!("{e}"),
+                            expire_time * 5,
+                        )?;
+                        CacheManager::clean_up_tx(con, tx_hash.clone())?;
+                        warn!("commit tx failed, hash: {}, e: {}", tx_hash, e);
+                    }
                 }
             }
         }
@@ -862,27 +891,27 @@ impl CacheBehavior for CacheManager {
             };
             CacheManager::save_receipt_content(con, tx_hash.clone(), receipt, expire_time)?;
             if is_ok {
-                if Self::is_packaged_tx(con, tx_hash.clone())? {
-                    let raw_tx = Self::original_tx(con, tx_hash.clone())?;
-                    let raw_tx: RawTransaction = Message::decode(raw_tx.as_slice())?;
-                    if let Some(Tx::NormalTx(normal_tx)) = raw_tx.tx {
-                        if let Some(transaction) = normal_tx.transaction {
-                            let package_data = deserialize::<Package>(transaction.data.as_slice())?;
-                            let block: Block = Message::decode(package_data.block.as_slice())?;
-
-                            let header = block.header.expect("get block header failed");
-                            let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
-                            header
-                                .encode(&mut block_header_bytes)
-                                .expect("encode block header failed");
-                            let maybe: MaybeLocked = BlockContext::current_account(con)?;
-                            let account = maybe.unlocked()?;
-                            let block_hash = account.hash(block_header_bytes.as_slice());
-                            BlockContext::step_next(con, block_hash)?;
-                            CacheManager::package(con, timing_batch, expire_time).await?;
-                        }
-                    }
-                }
+                // if Self::is_packaged_tx(con, tx_hash.clone())? {
+                //     let raw_tx = Self::original_tx(con, tx_hash.clone())?;
+                //     let raw_tx: RawTransaction = Message::decode(raw_tx.as_slice())?;
+                //     if let Some(Tx::NormalTx(normal_tx)) = raw_tx.tx {
+                //         if let Some(transaction) = normal_tx.transaction {
+                //             let package_data = deserialize::<Package>(transaction.data.as_slice())?;
+                //             let block: Block = Message::decode(package_data.block.as_slice())?;
+                //
+                //             let header = block.header.expect("get block header failed");
+                //             let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
+                //             header
+                //                 .encode(&mut block_header_bytes)
+                //                 .expect("encode block header failed");
+                //             let maybe: MaybeLocked = BlockContext::current_account(con)?;
+                //             let account = maybe.unlocked()?;
+                //             let block_hash = account.hash(block_header_bytes.as_slice());
+                //             BlockContext::step_next(con, block_hash)?;
+                //             CacheManager::package(con, timing_batch, expire_time).await?;
+                //         }
+                //     }
+                // }
                 let (tx, expire_time) = match controller().get_tx(hash).await {
                     Ok(tx) => {
                         info!("get tx success, hash: {}", tx_hash.clone());
@@ -912,11 +941,12 @@ impl CacheBehavior for CacheManager {
                         let account = maybe.unlocked()?;
                         let new_package = decoded_package.to_packaged_tx(*account.address())?;
                         let raw_tx = new_package.to(con, account, evm()).await?;
-                        controller()
+                        let new_hash = controller()
                             .send_raw_tx(con, account, raw_tx, false)
                             .await?;
+                        Self::clean_up_tx(con, hex_without_0x(hash.as_slice()))?;
+                        Self::tag_tx(con, hex_without_0x(new_hash.as_slice()))?;
                         warn!("repackage batch: {}.", decoded_package.batch_number);
-                        hdel(con, hash_to_block_number(), tx_hash.clone())?;
                     }
                 } else {
                     CacheManager::save_error(
@@ -971,12 +1001,12 @@ impl CacheBehavior for CacheManager {
         Ok(())
     }
 
-    async fn sub_xadd_stream(redis_con: &mut Connection, time_internal: u64) -> Result<()> {
+    async fn sub_xadd_stream(redis_con: &mut Connection, timing_batch: usize) -> Result<()> {
         let (enqueue_id, expire_id) = (
             get::<String>(redis_con, stream_id_key(ENQUEUE.to_string())).unwrap_or("0".to_string()),
             get::<String>(redis_con, stream_id_key(EXPIRE.to_string())).unwrap_or("0".to_string()),
         );
-        let opts = StreamReadOptions::default().block(time_internal as usize * 1000);
+        let opts = StreamReadOptions::default().count(timing_batch);
         let results: StreamReadReply = redis_con.xread_options(
             &[
                 stream_key(ENQUEUE.to_string()),
@@ -988,8 +1018,8 @@ impl CacheBehavior for CacheManager {
         for item in results.keys {
             match stream_key_suffix(item.key).as_str() {
                 ENQUEUE => {
+                    warn!("receive stream size: {}", item.ids.len());
                     for id in item.ids {
-                        info!("receive enqueue msg, id: {}", id.id);
                         let map = id.map;
                         let (hash, tx, vub, need) = match map.get("data") {
                             Some(RedisValue::Data(data)) => {
@@ -1010,7 +1040,6 @@ impl CacheBehavior for CacheManager {
                 }
                 EXPIRE => {
                     for id in item.ids {
-                        info!("receive enqueue msg, id: {}", id.id);
                         let map = id.map;
                         let (key, expire_time) = match map.get("data") {
                             Some(RedisValue::Data(data)) => {

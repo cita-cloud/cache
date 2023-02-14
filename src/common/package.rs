@@ -44,7 +44,7 @@ impl Package {
             to: parse_addr(STORE_ADDRESS)?,
             data: serialize(self.clone()),
             value: parse_value("0x0")?.to_vec(),
-            block_count: 20,
+            block_count: 100,
         })
     }
 }

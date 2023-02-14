@@ -24,6 +24,7 @@ use crate::common::util::hex_without_0x;
 use crate::core::key_manager::stream_key;
 use crate::core::schedule_task::Enqueue;
 use crate::redis::{xadd, Connection};
+use crate::{CacheBehavior, CacheManager};
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -348,27 +349,31 @@ where
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
-        let data = serialize(Enqueue::new(
-            hex_without_0x(hash),
-            buf,
-            valid_until_block,
-            need_package,
-        ));
-        let list = vec![("data".to_string(), data.as_slice())];
+        if need_package {
+            let data = serialize(Enqueue::new(
+                hex_without_0x(hash),
+                buf,
+                valid_until_block,
+                need_package,
+            ));
+            let list = vec![("data".to_string(), data.as_slice())];
 
-        xadd::<&[u8]>(
-            con,
-            stream_key(ENQUEUE.to_string()),
-            "*".to_string(),
-            list.as_slice(),
-        )?;
-        // CacheManager::enqueue(
-        //     con,
-        //     hex_without_0x(hash),
-        //     buf,
-        //     valid_until_block,
-        //     need_package,
-        // )?;
+            xadd::<&[u8]>(
+                con,
+                stream_key(ENQUEUE.to_string()),
+                "*".to_string(),
+                list.as_slice(),
+            )?;
+        } else {
+            CacheManager::enqueue(
+                con,
+                hex_without_0x(hash),
+                buf,
+                valid_until_block,
+                need_package,
+            )?;
+        }
+
         Ok(Hash::try_from_slice(hash)?)
     }
 
