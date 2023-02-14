@@ -266,7 +266,7 @@ async fn create_contract(
     let account = maybe.unlocked()?;
     let tx = create_contract.to(con, account, evm.clone()).await?;
     controller
-        .send_raw_tx(con, account, tx, create_contract.local_execute)
+        .send_raw_tx_async(con, account, tx, create_contract.local_execute)
         .await
 }
 
@@ -317,7 +317,7 @@ async fn create_tx(
     let account = maybe.unlocked()?;
     let tx = send_tx.to(con, account, evm.clone()).await?;
     controller
-        .send_raw_tx(con, account, tx, send_tx.local_execute)
+        .send_raw_tx_async(con, account, tx, send_tx.local_execute)
         .await
 }
 

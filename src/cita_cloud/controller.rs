@@ -301,6 +301,16 @@ pub trait TransactionSenderBehaviour {
     ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync;
+
+    async fn send_raw_tx_async<S>(
+        &self,
+        con: &mut Connection,
+        signer: &S,
+        raw_tx: CloudNormalTransaction,
+        need_package: bool,
+    ) -> Result<Hash>
+    where
+        S: SignerBehaviour + Send + Sync;
     async fn send_raw_utxo<S>(&self, signer: &S, raw_utxo: CloudUtxoTransaction) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync;
@@ -349,31 +359,51 @@ where
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
-        if need_package {
-            let data = serialize(Enqueue::new(
-                hex_without_0x(hash),
-                buf,
-                valid_until_block,
-                need_package,
-            ));
-            let list = vec![("data".to_string(), data.as_slice())];
+        CacheManager::enqueue(
+            con,
+            hex_without_0x(hash),
+            buf,
+            valid_until_block,
+            need_package,
+        )?;
+        Ok(Hash::try_from_slice(hash)?)
+    }
 
-            xadd::<&[u8]>(
-                con,
-                stream_key(ENQUEUE.to_string()),
-                "*".to_string(),
-                list.as_slice(),
-            )?;
-        } else {
-            CacheManager::enqueue(
-                con,
-                hex_without_0x(hash),
-                buf,
-                valid_until_block,
-                need_package,
-            )?;
-        }
+    async fn send_raw_tx_async<S>(
+        &self,
+        con: &mut Connection,
+        signer: &S,
+        raw_tx: CloudNormalTransaction,
+        need_package: bool,
+    ) -> Result<Hash>
+    where
+        S: SignerBehaviour + Send + Sync,
+    {
+        let valid_until_block = raw_tx.valid_until_block;
+        let mut buf = vec![];
+        let raw = signer.sign_raw_tx(raw_tx).await;
 
+        let empty = Vec::new();
+        let hash = match raw.tx {
+            Some(Tx::NormalTx(ref normal_tx)) => &normal_tx.transaction_hash,
+            Some(Tx::UtxoTx(ref utxo_tx)) => &utxo_tx.transaction_hash,
+            None => empty.as_slice(),
+        };
+        raw.encode(&mut buf)?;
+        let data = serialize(Enqueue::new(
+            hex_without_0x(hash),
+            buf,
+            valid_until_block,
+            need_package,
+        ));
+        let list = vec![("data".to_string(), data.as_slice())];
+
+        xadd::<&[u8]>(
+            con,
+            stream_key(ENQUEUE.to_string()),
+            "*".to_string(),
+            list.as_slice(),
+        )?;
         Ok(Hash::try_from_slice(hash)?)
     }
 

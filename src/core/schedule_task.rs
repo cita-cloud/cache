@@ -80,25 +80,6 @@ impl ScheduleTask for PackTxTask {
     fn enable(con: &mut Connection) -> Result<bool> {
         BlockContext::is_master(con)
     }
-
-    async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
-        let mut internal = time::interval(time::Duration::from_secs(time_internal));
-        // internal.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        loop {
-            internal.tick().await;
-            let con = &mut con();
-            match Self::enable(con) {
-                Ok(flag) => {
-                    if flag {
-                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
-                            warn!("[{} task] error: {}", Self::name(), e);
-                        }
-                    }
-                }
-                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
-            }
-        }
-    }
 }
 
 pub struct CheckTxTask;
@@ -201,24 +182,6 @@ impl ScheduleTask for PollTxsTask {
 
     fn enable(con: &mut Connection) -> Result<bool> {
         Ok(!BlockContext::is_master(con)?)
-    }
-
-    async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
-        let mut internal = time::interval(time::Duration::from_millis(time_internal));
-        loop {
-            internal.tick().await;
-            let con = &mut con();
-            match Self::enable(con) {
-                Ok(flag) => {
-                    if flag {
-                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
-                            warn!("[{} task] error: {}", Self::name(), e);
-                        }
-                    }
-                }
-                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
-            }
-        }
     }
 }
 
