@@ -22,6 +22,7 @@ use crate::{
 };
 use anyhow::Result;
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, Block, RawTransaction};
+use std::cmp::Ordering;
 
 use crate::cita_cloud::controller::{SignerBehaviour, TransactionSenderBehaviour};
 use crate::cita_cloud::executor::ExecutorBehaviour;
@@ -663,42 +664,50 @@ impl ValidatorBehavior for CacheManager {
 
     async fn replay(con: &mut Connection, _timing_batch: isize, _expire_time: usize) -> Result<()> {
         for (member, batch_number) in Self::dequeue_smallest_from_buffer(con)? {
-            if batch_number == BlockContext::get_batch_number(con).await? {
-                let maybe = BlockContext::current_account(con)?;
-                let account = maybe.unlocked()?;
+            let current = BlockContext::get_batch_number(con).await?;
+            match batch_number.cmp(&current) {
+                //greater bacth_number enqueue to replay in order
+                Ordering::Greater => {}
+                //master commit tx which maybe fail, ignore repeat tx with lower batch_number
+                Ordering::Less => Self::clean(con, member)?,
+                Ordering::Equal => {
+                    let maybe = BlockContext::current_account(con)?;
+                    let account = maybe.unlocked()?;
 
-                let raw = Self::original_tx(con, member.clone())?;
-                let decoded_package = deserialize::<Package>(raw.as_slice())?;
-                let block: Block = Message::decode(decoded_package.block.as_slice())?;
+                    let raw = Self::original_tx(con, member.clone())?;
+                    let decoded_package = deserialize::<Package>(raw.as_slice())?;
+                    let block: Block = Message::decode(decoded_package.block.as_slice())?;
 
-                let mut header = block.header.expect("get block header failed");
-                let body = block.body.clone().expect("get block body failed").clone();
-                let len = body.body.len();
-                header.prevhash = BlockContext::get_fake_block_hash(con).await?;
-                info!("replay batch: {} with {} txs!", batch_number, len);
+                    let mut header = block.header.expect("get block header failed");
+                    let body = block.body.clone().expect("get block body failed").clone();
+                    let len = body.body.len();
+                    header.prevhash = BlockContext::get_fake_block_hash(con).await?;
+                    info!("replay batch: {} with {} txs!", batch_number, len);
 
-                if let Ok(res) = local_executor()
-                    .exec(Block {
-                        version: 0,
-                        header: Some(header.clone()),
-                        body: block.body.clone(),
-                        proof: Vec::new(),
-                        state_root: Vec::new(),
-                    })
-                    .await
-                {
-                    if let Some(status) = res.status {
-                        if status.code == 0 {
-                            for raw_tx in block.body.expect("get block body failed").body {
-                                Self::try_clean_contract(con, raw_tx)?;
+                    if let Ok(res) = local_executor()
+                        .exec(Block {
+                            version: 0,
+                            header: Some(header.clone()),
+                            body: block.body.clone(),
+                            proof: Vec::new(),
+                            state_root: Vec::new(),
+                        })
+                        .await
+                    {
+                        if let Some(status) = res.status {
+                            if status.code == 0 {
+                                for raw_tx in block.body.expect("get block body failed").body {
+                                    Self::try_clean_contract(con, raw_tx)?;
+                                }
+                                let mut block_header_bytes =
+                                    Vec::with_capacity(header.encoded_len());
+                                header
+                                    .encode(&mut block_header_bytes)
+                                    .expect("encode block header failed");
+                                let block_hash = account.hash(block_header_bytes.as_slice());
+                                BlockContext::step_next(con, block_hash)?;
+                                Self::clean(con, member)?;
                             }
-                            let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
-                            header
-                                .encode(&mut block_header_bytes)
-                                .expect("encode block header failed");
-                            let block_hash = account.hash(block_header_bytes.as_slice());
-                            BlockContext::step_next(con, block_hash)?;
-                            Self::clean(con, member)?;
                         }
                     }
                 }
@@ -837,7 +846,7 @@ impl CacheBehavior for CacheManager {
     }
 
     async fn commit(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()> {
-        let members = CacheManager::uncommitted_txs(con, timing_batch)?;
+        let members = CacheManager::uncommitted_txs(con, timing_batch / 10)?;
         for (tx_hash, score) in members {
             let tx = Self::original_tx(con, tx_hash.clone())?;
             if tx.is_empty() {

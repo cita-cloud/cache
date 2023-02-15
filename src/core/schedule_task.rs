@@ -63,6 +63,25 @@ impl ScheduleTask for CommitTxTask {
     fn enable(con: &mut Connection) -> Result<bool> {
         BlockContext::is_master(con)
     }
+
+    async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
+        let mut internal = time::interval(time::Duration::from_secs(time_internal));
+        loop {
+            internal.tick().await;
+            let con = &mut con();
+            match Self::enable(con) {
+                Ok(flag) => {
+                    if flag {
+                        // info!("[{} task] ticked! and enabled!", Self::name());
+                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
+                            warn!("[{} task] error: {}", Self::name(), e);
+                        }
+                    }
+                }
+                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
+            }
+        }
+    }
 }
 
 pub struct PackTxTask;
