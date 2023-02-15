@@ -565,7 +565,7 @@ impl PackBehavior for CacheManager {
                         .expect("encode block header failed");
                     let block_hash = account.hash(block_header_bytes.as_slice());
                     BlockContext::step_next(con, block_hash)?;
-                    info!(
+                    warn!(
                         "package batch: {}, txs_num: {}, hash: {}",
                         batch_number, size, hash_str
                     );
@@ -664,7 +664,6 @@ impl ValidatorBehavior for CacheManager {
     async fn replay(con: &mut Connection, _timing_batch: isize, _expire_time: usize) -> Result<()> {
         for (member, batch_number) in Self::dequeue_smallest_from_buffer(con)? {
             if batch_number == BlockContext::get_batch_number(con).await? {
-                info!("replay batch: {}!", batch_number);
                 let maybe = BlockContext::current_account(con)?;
                 let account = maybe.unlocked()?;
 
@@ -673,7 +672,11 @@ impl ValidatorBehavior for CacheManager {
                 let block: Block = Message::decode(decoded_package.block.as_slice())?;
 
                 let mut header = block.header.expect("get block header failed");
+                let body = block.body.clone().expect("get block body failed").clone();
+                let len = body.body.len();
                 header.prevhash = BlockContext::get_fake_block_hash(con).await?;
+                info!("replay batch: {} with {} txs!", batch_number, len);
+
                 if let Ok(res) = local_executor()
                     .exec(Block {
                         version: 0,
