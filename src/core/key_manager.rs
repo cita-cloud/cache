@@ -676,6 +676,7 @@ impl ValidatorBehavior for CacheManager {
 
                     let raw = Self::original_tx(con, member.clone())?;
                     let decoded_package = deserialize::<Package>(raw.as_slice())?;
+
                     let block: Block = Message::decode(decoded_package.block.as_slice())?;
 
                     let mut header = block.header.expect("get block header failed");
@@ -684,6 +685,7 @@ impl ValidatorBehavior for CacheManager {
                     header.prevhash = BlockContext::get_fake_block_hash(con).await?;
                     info!("replay batch: {} with {} txs!", batch_number, len);
 
+                    let first = timestamp();
                     if let Ok(res) = local_executor()
                         .exec(Block {
                             version: 0,
@@ -694,6 +696,8 @@ impl ValidatorBehavior for CacheManager {
                         })
                         .await
                     {
+                        warn!("replay exec block cost {} ms!", timestamp() - first);
+
                         if let Some(status) = res.status {
                             if status.code == 0 {
                                 for raw_tx in block.body.expect("get block body failed").body {

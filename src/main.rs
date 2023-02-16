@@ -242,49 +242,53 @@ async fn main() {
         Err(e) => warn!("cache manager set up fail: {}", e),
     }
 
-    // let seconds = timing_internal_sec * 1000;
-    tokio::spawn(PackTxTask::schedule(
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("schedule-thread")
+        .worker_threads(10)
+        .enable_all()
+        .build()
+        .expect("create tokio runtime");
+    runtime.spawn(PackTxTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
     ));
-
-    tokio::spawn(CommitTxTask::schedule(
+    runtime.spawn(CommitTxTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(CheckTxTask::schedule(
+    runtime.spawn(CheckTxTask::schedule(
         2 * timing_internal_sec,
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(EvictExpiredKeyTask::schedule(
+    runtime.spawn(EvictExpiredKeyTask::schedule(
         timing_internal_sec * 10,
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(PollTxsTask::schedule(
+    runtime.spawn(PollTxsTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(ReplayTask::schedule(
+    runtime.spawn(ReplayTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(LazyEvictExpiredKeyTask::schedule(
+    runtime.spawn(LazyEvictExpiredKeyTask::schedule(
         timing_internal_sec * 2,
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(UsefulParamTask::schedule(
+    runtime.spawn(UsefulParamTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
     ));
-    tokio::spawn(XaddTask::schedule(
+    runtime.spawn(XaddTask::schedule(
         timing_internal_sec,
         timing_batch,
         expire_time,
