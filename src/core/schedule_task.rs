@@ -275,10 +275,12 @@ impl ScheduleTask for XaddTask {
         Ok(true)
     }
 
-    async fn schedule(_time_internal: u64, timing_batch: isize, _expire_time: usize) {
+    async fn schedule(time_internal: u64, timing_batch: isize, _expire_time: usize) {
         loop {
             let con = &mut con();
-            if let Err(e) = CacheManager::sub_xadd_stream(con, timing_batch as usize).await {
+            if let Err(e) =
+                CacheManager::sub_xadd_stream(con, time_internal, timing_batch as usize).await
+            {
                 warn!("[{} task] enable error: {}", Self::name(), e);
             }
         }

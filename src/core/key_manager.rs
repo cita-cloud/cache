@@ -331,7 +331,11 @@ pub trait CacheBehavior:
 
     async fn sub_evict_event(con: &mut Connection) -> Result<()>;
 
-    async fn sub_xadd_stream(con: &mut Connection, timing_batch: usize) -> Result<()>;
+    async fn sub_xadd_stream(
+        con: &mut Connection,
+        time_internal: u64,
+        timing_batch: usize,
+    ) -> Result<()>;
 
     async fn set_up(con: &mut Connection) -> Result<()>;
 }
@@ -1032,12 +1036,18 @@ impl CacheBehavior for CacheManager {
         Ok(())
     }
 
-    async fn sub_xadd_stream(redis_con: &mut Connection, timing_batch: usize) -> Result<()> {
+    async fn sub_xadd_stream(
+        redis_con: &mut Connection,
+        time_internal: u64,
+        timing_batch: usize,
+    ) -> Result<()> {
         let (enqueue_id, expire_id) = (
             get::<String>(redis_con, stream_id_key(ENQUEUE.to_string())).unwrap_or("0".to_string()),
             get::<String>(redis_con, stream_id_key(EXPIRE.to_string())).unwrap_or("0".to_string()),
         );
-        let opts = StreamReadOptions::default().count(timing_batch);
+        let opts = StreamReadOptions::default()
+            .block(time_internal as usize * 1000)
+            .count(timing_batch);
         let results: StreamReadReply = redis_con.xread_options(
             &[
                 stream_key(ENQUEUE.to_string()),
