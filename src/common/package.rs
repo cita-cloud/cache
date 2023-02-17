@@ -42,12 +42,14 @@ impl Package {
     }
 
     pub fn to_packaged_tx(&self, con: &mut Connection, from: Address) -> Result<PackageTx> {
+        let block_count = block_count() + BlockContext::current_cita_height(con)?;
+        info!("vub:{}", block_count);
         Ok(PackageTx {
             from,
             to: parse_addr(STORE_ADDRESS)?,
             data: serialize(self.clone()),
             value: parse_value("0x0")?.to_vec(),
-            block_count: block_count() + BlockContext::current_cita_height(con)?,
+            block_count,
         })
     }
 }
