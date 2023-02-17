@@ -554,7 +554,7 @@ impl PackBehavior for CacheManager {
                     }
 
                     let packaged_tx_obj = Package::new(batch_number, block.clone())
-                        .to_packaged_tx(con, *account.address())?;
+                        .to_packaged_tx(*account.address())?;
                     let raw_tx = packaged_tx_obj.to(con, account, evm()).await?;
                     let hash = controller()
                         .send_raw_tx(con, account, raw_tx, false)
@@ -878,8 +878,7 @@ impl CacheBehavior for CacheManager {
                             let decoded_package = deserialize::<Package>(package_data.as_slice())?;
                             let maybe: MaybeLocked = BlockContext::current_account(con)?;
                             let account = maybe.unlocked()?;
-                            let new_package =
-                                decoded_package.to_packaged_tx(con, *account.address())?;
+                            let new_package = decoded_package.to_packaged_tx(*account.address())?;
                             let raw_tx = new_package.to(con, account, evm()).await?;
                             let new_hash = controller()
                                 .send_raw_tx(con, account, raw_tx, false)
@@ -952,8 +951,7 @@ impl CacheBehavior for CacheManager {
                         let decoded_package = deserialize::<Package>(package_data.as_slice())?;
                         let maybe: MaybeLocked = BlockContext::current_account(con)?;
                         let account = maybe.unlocked()?;
-                        let new_package =
-                            decoded_package.to_packaged_tx(con, *account.address())?;
+                        let new_package = decoded_package.to_packaged_tx(*account.address())?;
                         let raw_tx = new_package.to(con, account, evm()).await?;
                         let new_hash = controller()
                             .send_raw_tx(con, account, raw_tx, false)
@@ -1077,7 +1075,7 @@ impl CacheBehavior for CacheManager {
                                 }
 
                                 let packaged_tx_obj = Package::new(batch_number, block.clone())
-                                    .to_packaged_tx(con, *account.address())?;
+                                    .to_packaged_tx(*account.address())?;
                                 let raw_tx = packaged_tx_obj.to(con, account, evm()).await?;
                                 let hash = controller()
                                     .send_raw_tx(con, account, raw_tx, false)
