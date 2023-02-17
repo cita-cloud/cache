@@ -22,7 +22,6 @@ use crate::common::constant::ENQUEUE;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::util::hex_without_0x;
 use crate::core::key_manager::stream_key;
-use crate::core::schedule_task::Enqueue;
 use crate::redis::{xadd, Connection};
 use crate::{CacheBehavior, CacheManager};
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
@@ -37,7 +36,6 @@ use cita_cloud_proto::{
     controller::rpc_service_client::RpcServiceClient,
     controller::{BlockNumber, Flag, SystemConfig},
 };
-use msgpack_schema::serialize;
 use tokio::sync::OnceCell;
 
 #[derive(Debug, Clone)]
@@ -374,29 +372,21 @@ where
         con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
-        need_package: bool,
+        _need_package: bool,
     ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync,
     {
-        let valid_until_block = raw_tx.valid_until_block;
-        let mut buf = vec![];
         let raw = signer.sign_raw_tx(raw_tx).await;
-
+        let mut buf = Vec::with_capacity(raw.encoded_len());
+        raw.encode(&mut buf)?;
         let empty = Vec::new();
         let hash = match raw.tx {
             Some(Tx::NormalTx(ref normal_tx)) => &normal_tx.transaction_hash,
             Some(Tx::UtxoTx(ref utxo_tx)) => &utxo_tx.transaction_hash,
             None => empty.as_slice(),
         };
-        raw.encode(&mut buf)?;
-        let data = serialize(Enqueue::new(
-            hex_without_0x(hash),
-            buf,
-            valid_until_block,
-            need_package,
-        ));
-        let list = vec![("data".to_string(), data.as_slice())];
+        let list = vec![("data".to_string(), buf.as_slice())];
 
         xadd::<&[u8]>(
             con,

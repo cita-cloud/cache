@@ -236,6 +236,7 @@ pub struct Enqueue {
 }
 
 impl Enqueue {
+    #[allow(dead_code)]
     pub fn new(hash: String, tx: Vec<u8>, valid_util_block: u64, need_package: bool) -> Self {
         Self {
             hash,

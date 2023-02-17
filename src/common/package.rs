@@ -15,7 +15,9 @@ use crate::cita_cloud::evm::constant::STORE_ADDRESS;
 use crate::common::constant::block_count;
 use crate::common::crypto::Address;
 use crate::common::util::{parse_addr, parse_value};
+use crate::redis::Connection;
 use crate::rest_api::post::PackageTx;
+use crate::BlockContext;
 use anyhow::Result;
 use cita_cloud_proto::blockchain::Block;
 use msgpack_schema::{serialize, Deserialize, Serialize};
@@ -39,13 +41,13 @@ impl Package {
         }
     }
 
-    pub fn to_packaged_tx(&self, from: Address) -> Result<PackageTx> {
+    pub fn to_packaged_tx(&self, con: &mut Connection, from: Address) -> Result<PackageTx> {
         Ok(PackageTx {
             from,
             to: parse_addr(STORE_ADDRESS)?,
             data: serialize(self.clone()),
             value: parse_value("0x0")?.to_vec(),
-            block_count: block_count(),
+            block_count: block_count() + BlockContext::current_cita_height(con)?,
         })
     }
 }
