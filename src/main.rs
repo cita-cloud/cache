@@ -25,8 +25,8 @@ use crate::cita_cloud::evm::EvmClient;
 use crate::cita_cloud::executor::ExecutorClient;
 use crate::common::cache_log::LOGGER;
 use crate::common::constant::{
-    CACHE_CONFIG, CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, KEY_PAIR,
-    LOCAL_EVM_CLIENT, LOCAL_EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
+    BLOCK_COUNT, CACHE_CONFIG, CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT,
+    KEY_PAIR, LOCAL_EVM_CLIENT, LOCAL_EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
 };
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
@@ -109,6 +109,9 @@ pub struct CacheConfig {
     timing_internal_sec: Option<u64>,
     timing_batch: Option<u64>,
     redis_max_workers: Option<u64>,
+    stream_block_ms: Option<u64>,
+    stream_max_count: Option<u64>,
+    packaged_tx_vub: Option<u64>,
     log_level: LogLevel,
     //read cache timeout
     expire_time: Option<u64>,
@@ -129,6 +132,9 @@ impl Default for CacheConfig {
             redis_addr: Some("redis://default:rivtower@127.0.0.1:6379".to_string()),
             timing_internal_sec: Some(1),
             timing_batch: Some(100),
+            stream_block_ms: Some(100),
+            stream_max_count: Some(10000),
+            packaged_tx_vub: Some(20),
             redis_max_workers: Some(100),
             log_level: LogLevel::Normal,
             expire_time: Some(60),
@@ -149,6 +155,9 @@ impl Display for CacheConfig {
             "redis_addr": self.redis_addr,
             "timing_internal_sec": self.timing_internal_sec,
             "timing_batch": self.timing_batch,
+            "stream_block_ms": self.stream_block_ms,
+            "stream_max_count": self.stream_max_count,
+            "packaged_tx_vub": self.packaged_tx_vub,
             "redis_max_workers": self.redis_max_workers,
             "log_level": self.log_level,
             "expire_time": self.expire_time,
@@ -185,6 +194,9 @@ async fn set_param(
         config.redis_addr.unwrap_or_default(),
         config.redis_max_workers.unwrap_or_default(),
     );
+    if let Err(e) = BLOCK_COUNT.set(config.packaged_tx_vub.unwrap_or_default()) {
+        panic!("store block count error: {e:?}");
+    }
     if let Err(e) = CONTROLLER_CLIENT.set(ctx.controller.clone()) {
         panic!("store controller client error: {e:?}");
     }
@@ -289,8 +301,8 @@ async fn main() {
         expire_time,
     ));
     runtime.spawn(XaddTask::schedule(
-        timing_internal_sec,
-        timing_batch,
+        config.stream_block_ms.unwrap_or_default(),
+        config.stream_max_count.unwrap_or_default() as isize,
         expire_time,
     ));
 

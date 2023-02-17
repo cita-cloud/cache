@@ -67,6 +67,7 @@ pub static CRYPTO_CLIENT: OnceCell<CryptoClient> = OnceCell::const_new();
 pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
 pub static CACHE_CONFIG: OnceCell<CacheConfig> = OnceCell::const_new();
 pub static KEY_PAIR: OnceCell<KeyPair> = OnceCell::const_new();
+pub static BLOCK_COUNT: OnceCell<u64> = OnceCell::const_new();
 
 pub fn rough_internal() -> u64 {
     *ROUGH_INTERNAL.get().unwrap() * ONE_THOUSAND
@@ -74,6 +75,10 @@ pub fn rough_internal() -> u64 {
 
 pub fn controller() -> ControllerClient {
     CONTROLLER_CLIENT.get().unwrap().clone()
+}
+
+pub fn block_count() -> u64 {
+    *BLOCK_COUNT.get().unwrap()
 }
 
 // #[warn(dead_code)]
