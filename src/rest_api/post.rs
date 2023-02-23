@@ -117,7 +117,7 @@ pub struct CreateContract {
     pub value: Option<String>,
     #[schema(example = 20)]
     pub block_count: Option<i64>,
-    pub local_execute: bool,
+    pub local_execute: Option<bool>,
 }
 
 impl Default for CreateContract {
@@ -126,7 +126,7 @@ impl Default for CreateContract {
             data: "0x608060405234801561001057600080fd5b5060f58061001f6000396000f3006080604052600436106053576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806306661abd1460585780634f2be91f146080578063d826f88f146094575b600080fd5b348015606357600080fd5b50606a60a8565b6040518082815260200191505060405180910390f35b348015608b57600080fd5b50609260ae565b005b348015609f57600080fd5b5060a660c0565b005b60005481565b60016000808282540192505081905550565b600080819055505600a165627a7a72305820faa1d1f51d7b5ca2b200e0f6cdef4f2d7e44ee686209e300beb1146f40d32dee0029".to_string(),
             value: Some("0x0".to_string()),
             block_count: Some(20),
-            local_execute: true,
+            local_execute: Some(false),
         }
     }
 }
@@ -178,7 +178,7 @@ pub struct SendTx {
     pub value: Option<String>,
     #[schema(example = 20)]
     pub block_count: Option<i64>,
-    pub local_execute: bool,
+    pub local_execute: Option<bool>,
 }
 
 impl Default for SendTx {
@@ -188,7 +188,7 @@ impl Default for SendTx {
             data: Some("0x4f2be91f".to_string()),
             value: Some("0x0".to_string()),
             block_count: Some(20),
-            local_execute: true,
+            local_execute: Some(false),
         }
     }
 }
@@ -267,7 +267,12 @@ async fn create_contract(
     let account = maybe.unlocked()?;
     let tx = create_contract.to(con, account, evm.clone()).await?;
     controller
-        .send_raw_tx_async(con, account, tx, create_contract.local_execute)
+        .send_raw_tx_async(
+            con,
+            account,
+            tx,
+            create_contract.local_execute.unwrap_or_default(),
+        )
         .await
 }
 
@@ -318,7 +323,7 @@ async fn create_tx(
     let account = maybe.unlocked()?;
     let tx = send_tx.to(con, account, evm.clone()).await?;
     controller
-        .send_raw_tx_async(con, account, tx, send_tx.local_execute)
+        .send_raw_tx_async(con, account, tx, send_tx.local_execute.unwrap_or_default())
         .await
 }
 
