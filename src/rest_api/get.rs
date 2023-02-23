@@ -19,9 +19,9 @@ use crate::cita_cloud::evm::EvmBehaviour;
 use crate::common::crypto::sm::{sm2_generate_secret_key, sm2_sign};
 use crate::common::display::Display;
 use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
-use crate::core::context::Context;
 use crate::core::key_manager::{key, CacheBehavior, CacheManager};
-use crate::redis::con;
+use crate::core::rpc_clients::RpcClients;
+use crate::redis::Pool;
 use crate::rest_api::common::{failure, success, CacheResult};
 use crate::{
     BlockContext, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash,
@@ -53,10 +53,8 @@ pub async fn version(flag: bool) -> Json<CacheResult<Value>> {
 ///Get current block number
 #[get("/get-block-number")]
 #[utoipa::path(get, path = "/api/get-block-number")]
-pub async fn block_number(
-    _ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
-) -> Json<CacheResult<Value>> {
-    let con = &mut con();
+pub async fn block_number(pool: &State<Pool>) -> Json<CacheResult<Value>> {
+    let con = &mut pool.get();
     match BlockContext::current_cita_height(con) {
         Ok(height) => Json(success(json!(height))),
         Err(e) => Json(failure(anyhow!(e))),
@@ -75,7 +73,8 @@ params(
 pub async fn abi(
     address: &str,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    pool: &State<Pool>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-abi address {}", address);
     let address = remove_0x(address);
@@ -83,7 +82,7 @@ pub async fn abi(
         Ok(address) => address,
         Err(e) => return Json(failure(e)),
     };
-    let con = &mut con();
+    let con = &mut pool.get();
 
     match CacheManager::load_or_query_proto(
         con,
@@ -109,8 +108,9 @@ params(
 )]
 pub async fn balance(
     address: &str,
+    pool: &State<Pool>,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-balance address {}", address);
     let address = remove_0x(address);
@@ -118,7 +118,7 @@ pub async fn balance(
         Ok(address) => address,
         Err(e) => return Json(failure(e)),
     };
-    let con = &mut con();
+    let con = &mut pool.get();
     match CacheManager::load_or_query_proto(
         con,
         key("balance".to_string(), address.to_string()),
@@ -143,13 +143,14 @@ params(
 )]
 pub async fn block(
     hash_or_height: &str,
+    pool: &State<Pool>,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-block hash_or_height {}", hash_or_height);
     let hash_or_height = remove_0x(hash_or_height);
     let expire_time = config.expire_time.unwrap_or_default() as usize;
-    let con = &mut con();
+    let con = &mut pool.get();
 
     let result = if let Ok(data) = parse_u64(hash_or_height) {
         CacheManager::load_or_query_proto(
@@ -190,8 +191,9 @@ params(
 )]
 pub async fn code(
     address: &str,
+    pool: &State<Pool>,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-code address {}", address);
     let address = remove_0x(address);
@@ -199,7 +201,7 @@ pub async fn code(
         Ok(address) => address,
         Err(e) => return Json(failure(e)),
     };
-    let con = &mut con();
+    let con = &mut pool.get();
     match CacheManager::load_or_query_proto(
         con,
         key("code".to_string(), address.to_string()),
@@ -224,8 +226,9 @@ params(
 )]
 pub async fn tx(
     hash: &str,
+    pool: &State<Pool>,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-tx hash {}", hash);
     let hash = remove_0x(hash);
@@ -233,7 +236,7 @@ pub async fn tx(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    let con = &mut con();
+    let con = &mut pool.get();
     match CacheManager::load_or_query_proto(
         con,
         key("tx".to_string(), hash.to_string()),
@@ -258,8 +261,9 @@ params(
 )]
 pub async fn account_nonce(
     address: &str,
+    pool: &State<Pool>,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-account-nonce address {}", address);
     let address = remove_0x(address);
@@ -267,7 +271,7 @@ pub async fn account_nonce(
         Ok(address) => address,
         Err(e) => return Json(failure(e)),
     };
-    let con = &mut con();
+    let con = &mut pool.get();
     match CacheManager::load_or_query_proto(
         con,
         key("account-nonce".to_string(), address.to_string()),
@@ -292,8 +296,9 @@ params(
 )]
 pub async fn receipt(
     hash: &str,
+    pool: &State<Pool>,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-receipt hash {}", hash);
     let hash = remove_0x(hash);
@@ -301,7 +306,7 @@ pub async fn receipt(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    let con = &mut con();
+    let con = &mut pool.get();
     match CacheManager::load_or_query_proto(
         con,
         key("receipt".to_string(), hash.to_string()),
@@ -326,8 +331,9 @@ params(
 )]
 pub async fn receipt_inner(
     hash: &str,
+    pool: &State<Pool>,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-receipt inner hash {}", hash);
     let hash = remove_0x(hash);
@@ -335,7 +341,7 @@ pub async fn receipt_inner(
         Ok(hash) => hash,
         Err(e) => return Json(failure(e)),
     };
-    let con = &mut con();
+    let con = &mut pool.get();
     match CacheManager::load_or_query_proto(
         con,
         key("receipt-inner".to_string(), hash.to_string()),
@@ -352,8 +358,8 @@ pub async fn receipt_inner(
 ///Get system config
 #[get("/get-system-config")]
 #[utoipa::path(get, path = "/api/get-system-config")]
-pub async fn system_config() -> Json<CacheResult<Value>> {
-    let con = &mut con();
+pub async fn system_config(pool: &State<Pool>) -> Json<CacheResult<Value>> {
+    let con = &mut pool.get();
     match BlockContext::system_config(con) {
         Ok(config) => Json(success(json!(config.to_json()))),
         Err(e) => Json(failure(anyhow!(e))),
@@ -371,11 +377,12 @@ params(
 )]
 pub async fn block_hash(
     block_number: usize,
+    pool: &State<Pool>,
     config: &State<CacheConfig>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     info!("get-block-hash block_number {}", block_number);
-    let con = &mut con();
+    let con = &mut pool.get();
     match CacheManager::load_or_query_array_like(
         con,
         key("block-hash".to_string(), block_number.to_string()),

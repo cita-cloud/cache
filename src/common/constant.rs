@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::redis::Pool;
-use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, RpcClients};
 use efficient_sm2::KeyPair;
 use tokio::sync::OnceCell;
 
@@ -57,45 +56,43 @@ pub const TX: &str = "tx";
 pub const CONTRACT_KEY: &str = "contract";
 pub const EXPIRED_KEY_EVENT_AT_ALL_DB: &str = "__keyevent@*__:expired";
 
-pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
-pub static CONTROLLER_CLIENT: OnceCell<ControllerClient> = OnceCell::const_new();
-pub static EXECUTOR_CLIENT: OnceCell<ExecutorClient> = OnceCell::const_new();
-pub static LOCAL_EXECUTOR_CLIENT: OnceCell<ExecutorClient> = OnceCell::const_new();
-pub static EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
-pub static LOCAL_EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
-pub static CRYPTO_CLIENT: OnceCell<CryptoClient> = OnceCell::const_new();
-pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
 pub static CACHE_CONFIG: OnceCell<CacheConfig> = OnceCell::const_new();
+pub static RPC_CLIENTS: OnceCell<
+    RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+> = OnceCell::const_new();
 pub static KEY_PAIR: OnceCell<KeyPair> = OnceCell::const_new();
-pub static BLOCK_COUNT: OnceCell<u64> = OnceCell::const_new();
 
-pub fn rough_internal() -> u64 {
-    *ROUGH_INTERNAL.get().unwrap() * ONE_THOUSAND
+pub fn config() -> CacheConfig {
+    CACHE_CONFIG.get().unwrap().clone()
 }
 
-pub fn controller() -> ControllerClient {
-    CONTROLLER_CLIENT.get().unwrap().clone()
+fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> {
+    RPC_CLIENTS.get().unwrap().clone()
+}
+
+pub fn rough_internal() -> u64 {
+    config().rough_internal.unwrap_or_default() * ONE_THOUSAND
 }
 
 pub fn block_count() -> u64 {
-    *BLOCK_COUNT.get().unwrap()
+    config().packaged_tx_vub.unwrap_or_default()
 }
 
 // #[warn(dead_code)]
 // pub fn crypto() -> CryptoClient {
-//     CRYPTO_CLIENT.get().unwrap().clone()
+//     rpc_clients().crypto
 // }
 
+pub fn controller() -> ControllerClient {
+    rpc_clients().controller
+}
+
 pub fn local_executor() -> ExecutorClient {
-    LOCAL_EXECUTOR_CLIENT.get().unwrap().clone()
+    rpc_clients().local_executor
 }
 
 pub fn evm() -> EvmClient {
-    EVM_CLIENT.get().unwrap().clone()
-}
-
-pub fn config() -> CacheConfig {
-    CACHE_CONFIG.get().unwrap().clone()
+    rpc_clients().evm
 }
 
 // pub fn keypair() -> KeyPair {

@@ -17,7 +17,7 @@ use crate::common::constant::*;
 use crate::common::util::{hex_without_0x, parse_hash, timestamp};
 use crate::redis::{hexists, sadd, set, sismember, smove, ttl, xadd, Connection};
 use crate::{
-    con, delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
+    delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
 };
 use anyhow::Result;
@@ -35,6 +35,7 @@ use prost::Message;
 use r2d2_redis::redis::{Commands, ControlFlow, FromRedisValue, ToRedisArgs, Value as RedisValue};
 use serde_json::Value;
 
+use crate::core::schedule_task::get_con;
 use crate::core::schedule_task::Expire;
 use r2d2_redis::redis::streams::{StreamReadOptions, StreamReadReply};
 use std::future::Future;
@@ -337,7 +338,7 @@ pub trait CacheBehavior:
         timing_batch: usize,
     ) -> Result<()>;
 
-    async fn set_up(con: &mut Connection) -> Result<()>;
+    fn set_up(con: &mut Connection) -> Result<()>;
 }
 
 pub struct CacheManager;
@@ -987,7 +988,6 @@ impl CacheBehavior for CacheManager {
         }
         Ok(())
     }
-
     async fn sub_evict_event(redis_con: &mut Connection) -> Result<()> {
         psubscribe(redis_con, EXPIRED_KEY_EVENT_AT_ALL_DB.to_string(), |msg| {
             let expired_key = match msg.get_payload::<String>() {
@@ -1003,8 +1003,7 @@ impl CacheBehavior for CacheManager {
                     return ControlFlow::Continue;
                 }
             };
-            let con = &mut con();
-            match CacheManager::clean_up_expired_by_key(con, expired_key) {
+            match CacheManager::clean_up_expired_by_key(&mut get_con(), expired_key) {
                 Ok(expired_key) => info!("evict expired key: {}", expired_key),
                 Err(e) => warn!("evict expired failed: {}", e),
             }
@@ -1121,7 +1120,7 @@ impl CacheBehavior for CacheManager {
         Ok(())
     }
 
-    async fn set_up(con: &mut Connection) -> Result<()> {
+    fn set_up(con: &mut Connection) -> Result<()> {
         for item in [
             CITA_CLOUD_BLOCK_NUMBER.to_string(),
             SYSTEM_CONFIG.to_string(),

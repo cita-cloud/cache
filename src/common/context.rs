@@ -15,16 +15,15 @@
 use crate::cita_cloud::controller::{ControllerBehaviour, SignerBehaviour};
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
-use crate::common::constant::{config, controller, local_executor, ADMIN_ACCOUNT};
+use crate::common::constant::{controller, local_executor, ADMIN_ACCOUNT};
 use crate::common::util::{hex, parse_data, timestamp};
-use crate::core::key_manager::PackBehavior;
 use crate::core::key_manager::{
     admin_account_key, cita_cloud_block_number_key, key_without_param, rollup_write_enable,
     system_config_key,
 };
 use crate::core::key_manager::{current_batch_number, current_fake_block_hash};
 use crate::redis::{set, Connection};
-use crate::{exists, get, incr_one, CacheBehavior, CacheManager, CryptoType, KEY_PAIR};
+use crate::{config, exists, get, incr_one, CacheBehavior, CacheManager, CryptoType, KEY_PAIR};
 use anyhow::{anyhow, Result};
 use cita_cloud_proto::{
     blockchain::{Block, BlockHeader, RawTransaction, RawTransactions},
@@ -36,12 +35,7 @@ use std::cmp;
 
 #[tonic::async_trait]
 pub trait LocalBehaviour {
-    async fn set_up(
-        con: &mut Connection,
-        expire_time: usize,
-        crypto_type: CryptoType,
-        is_master: bool,
-    ) -> Result<()>;
+    async fn set_up(con: &mut Connection) -> Result<()>;
     async fn timing_update(con: &mut Connection, expire_time: usize) -> Result<()>;
 
     async fn get_batch_number(con: &mut Connection) -> Result<u64>;
@@ -147,16 +141,12 @@ impl BlockContext {
 
 #[tonic::async_trait]
 impl LocalBehaviour for BlockContext {
-    async fn set_up(
-        con: &mut Connection,
-        expire_time: usize,
-        crypto_type: CryptoType,
-        is_master: bool,
-    ) -> Result<()> {
-        Self::timing_update(con, expire_time).await?;
-        Self::create_admin_account(con, crypto_type)?;
+    async fn set_up(con: &mut Connection) -> Result<()> {
+        let config = config();
+        Self::timing_update(con, config.expire_time.unwrap_or_default() as usize).await?;
+        Self::create_admin_account(con, config.crypto_type)?;
         if !Self::is_restart(con)? {
-            Self::change_role(con, is_master)?;
+            Self::change_role(con, config.is_master)?;
         }
         Ok(())
     }
@@ -240,8 +230,6 @@ impl LocalBehaviour for BlockContext {
                 let block_hash = account.hash(block_header_bytes.as_slice());
                 info!("current block hash: {}", hex(block_hash.as_slice()));
                 Self::step_next(con, block_hash)?;
-                CacheManager::package(con, config().timing_batch.unwrap_or_default() as isize, 0)
-                    .await?;
                 Ok(())
             } else {
                 Err(anyhow!(

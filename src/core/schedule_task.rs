@@ -14,11 +14,16 @@
 
 use crate::common::context::BlockContext;
 use crate::core::key_manager::{CacheBehavior, CacheManager, PackBehavior, ValidatorBehavior};
-use crate::redis::{con, Connection};
-use crate::LocalBehaviour;
+use crate::redis::{Connection, Pool};
+use crate::{config, LocalBehaviour};
 use anyhow::Result;
 use tokio::time;
 // use tokio::time::MissedTickBehavior;
+pub static SCHEDULE_POOL: OnceCell<Pool> = OnceCell::const_new();
+
+pub fn get_con() -> Connection {
+    SCHEDULE_POOL.get().unwrap().get()
+}
 
 #[tonic::async_trait]
 pub trait ScheduleTask {
@@ -30,13 +35,12 @@ pub trait ScheduleTask {
 
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
         let mut internal = time::interval(time::Duration::from_millis(time_internal));
+        let con = &mut get_con();
         loop {
             internal.tick().await;
-            let con = &mut con();
             match Self::enable(con) {
                 Ok(flag) => {
                     if flag {
-                        // info!("[{} task] ticked! and enabled!", Self::name());
                         if let Err(e) = Self::task(con, timing_batch, expire_time).await {
                             warn!("[{} task] error: {}", Self::name(), e);
                         }
@@ -66,9 +70,9 @@ impl ScheduleTask for CommitTxTask {
 
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
         let mut internal = time::interval(time::Duration::from_secs(time_internal));
+        let con = &mut get_con();
         loop {
             internal.tick().await;
-            let con = &mut con();
             match Self::enable(con) {
                 Ok(flag) => {
                     if flag {
@@ -119,9 +123,9 @@ impl ScheduleTask for CheckTxTask {
 
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
         let mut internal = time::interval(time::Duration::from_secs(time_internal));
+        let con = &mut get_con();
         loop {
             internal.tick().await;
-            let con = &mut con();
             match Self::enable(con) {
                 Ok(flag) => {
                     if flag {
@@ -222,6 +226,8 @@ impl ScheduleTask for ReplayTask {
 }
 
 use msgpack_schema::{Deserialize, Serialize};
+use tokio::runtime::Runtime;
+use tokio::sync::OnceCell;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Enqueue {
@@ -277,13 +283,74 @@ impl ScheduleTask for XaddTask {
     }
 
     async fn schedule(time_internal: u64, timing_batch: isize, _expire_time: usize) {
+        let con = &mut get_con();
         loop {
-            let con = &mut con();
             if let Err(e) =
                 CacheManager::sub_xadd_stream(con, time_internal, timing_batch as usize).await
             {
                 warn!("[{} task] enable error: {}", Self::name(), e);
             }
         }
+    }
+}
+
+pub struct ScheduleTaskManager;
+
+impl ScheduleTaskManager {
+    pub fn setup() -> Runtime {
+        let config = config();
+        if let Err(e) = SCHEDULE_POOL.set(Pool::new_with_workers(10u32)) {
+            panic!("store schedule pool failed, {}", e);
+        }
+        let timing_internal_sec = config.timing_internal_sec.unwrap_or_default();
+        let timing_batch = config.timing_batch.unwrap_or_default() as isize;
+        let expire_time = config.expire_time.unwrap_or_default() as usize;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("schedule-thread")
+            .worker_threads(10)
+            .enable_all()
+            .build()
+            .expect("create tokio runtime");
+        runtime.spawn(CommitTxTask::schedule(
+            timing_internal_sec,
+            timing_batch,
+            expire_time,
+        ));
+        runtime.spawn(CheckTxTask::schedule(
+            2 * timing_internal_sec,
+            timing_batch,
+            expire_time,
+        ));
+        runtime.spawn(EvictExpiredKeyTask::schedule(
+            timing_internal_sec * 10,
+            timing_batch,
+            expire_time,
+        ));
+        runtime.spawn(PollTxsTask::schedule(
+            timing_internal_sec,
+            timing_batch,
+            expire_time,
+        ));
+        runtime.spawn(ReplayTask::schedule(
+            timing_internal_sec,
+            timing_batch,
+            expire_time,
+        ));
+        runtime.spawn(LazyEvictExpiredKeyTask::schedule(
+            timing_internal_sec * 2,
+            timing_batch,
+            expire_time,
+        ));
+        runtime.spawn(UsefulParamTask::schedule(
+            timing_internal_sec,
+            timing_batch,
+            expire_time,
+        ));
+        runtime.spawn(XaddTask::schedule(
+            config.stream_block_ms.unwrap_or_default(),
+            config.stream_max_count.unwrap_or_default() as isize,
+            expire_time,
+        ));
+        runtime
     }
 }

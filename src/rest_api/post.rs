@@ -22,12 +22,12 @@ use crate::common::context::BlockContext;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
 use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
-use crate::core::context::Context;
 use crate::core::key_manager::{contract_key, CacheBehavior, CacheManager};
+use crate::core::rpc_clients::RpcClients;
 use crate::redis::Connection;
 use crate::rest_api::common::{failure, success, CacheResult};
 use crate::{
-    con, ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash,
+    ArrayLike, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash, Pool,
 };
 use anyhow::{anyhow, Result};
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
@@ -283,8 +283,8 @@ post,
 path = "/api/change-role",
 request_body = ChangeRole,
 )]
-pub async fn change_role(result: Json<ChangeRole>) -> Json<CacheResult<Value>> {
-    let con = &mut con();
+pub async fn change_role(result: Json<ChangeRole>, pool: &State<Pool>) -> Json<CacheResult<Value>> {
+    let con = &mut pool.get();
     match BlockContext::change_role(con, result.is_master) {
         Ok(data) => Json(success(json!(data))),
         Err(e) => Json(failure(anyhow!(e))),
@@ -300,9 +300,10 @@ request_body = CreateContract,
 )]
 pub async fn create(
     result: Json<CreateContract>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    pool: &State<Pool>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    let con = &mut con();
+    let con = &mut pool.get();
     if let Ok(true) = BlockContext::is_master(con) {
         match create_contract(con, ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
             Ok(data) => Json(success(data.to_json())),
@@ -336,9 +337,10 @@ request_body = SendTx,
 )]
 pub async fn send_tx(
     result: Json<SendTx>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    pool: &State<Pool>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
-    let con = &mut con();
+    let con = &mut pool.get();
     if let Ok(true) = BlockContext::is_master(con) {
         match create_tx(con, ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
             Ok(data) => Json(success(data.to_json())),
@@ -352,7 +354,7 @@ pub async fn send_tx(
 async fn call_or_load(
     con: &mut Connection,
     result: Call,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Result<Value> {
     let key = contract_key(
@@ -384,10 +386,11 @@ request_body = Call,
 )]
 pub async fn call(
     result: Json<Call>,
-    ctx: &State<Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
+    pool: &State<Pool>,
+    ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
-    let con = &mut con();
+    let con = &mut pool.get();
     match call_or_load(con, result.0, ctx, config).await {
         Ok(data) => Json(success(data)),
         Err(e) => Json(failure(e)),

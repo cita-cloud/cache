@@ -13,13 +13,24 @@
 // limitations under the License.
 
 use crate::common::util::current_time;
-use log::{Level, Metadata, Record};
+use crate::config;
+use anyhow::Result;
+use log::{set_logger, set_max_level, Level, LevelFilter, Metadata, Record};
 use rocket::yansi::Paint;
 use std::thread;
 
 pub static LOGGER: CacheLogger = CacheLogger;
 
 pub struct CacheLogger;
+
+impl CacheLogger {
+    pub fn set_up() -> Result<()> {
+        let config = config();
+        set_logger(&LOGGER)?;
+        set_max_level(LevelFilter::from(config.log_level));
+        Ok(())
+    }
+}
 
 impl log::Log for CacheLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {

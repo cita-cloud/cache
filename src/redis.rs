@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use crate::common::constant::REDIS_POOL;
+use crate::config;
 use r2d2::PooledConnection;
 use r2d2_redis::redis::{Commands, ControlFlow, FromRedisValue, Msg, PubSubCommands, ToRedisArgs};
 use r2d2_redis::RedisConnectionManager;
@@ -19,22 +19,38 @@ use std::collections::HashSet;
 use std::fmt::Display;
 use std::hash::Hash;
 
-// Pool initiation.
-// Call it starting an app and store a pool as a rocket managed state.
-pub fn pool(redis_addr: String, workers: u32) -> Pool {
-    let manager = RedisConnectionManager::new(redis_addr).expect("connection manager");
-    Pool::builder()
-        .max_size(workers)
-        .build(manager)
-        .expect("db pool")
-}
-
 pub type Connection = PooledConnection<RedisConnectionManager>;
 
-pub type Pool = r2d2::Pool<RedisConnectionManager>;
+pub struct Pool {
+    pool: r2d2::Pool<RedisConnectionManager>,
+}
 
-pub fn con() -> Connection {
-    REDIS_POOL.get().unwrap().get().unwrap()
+impl Pool {
+    pub fn new() -> Self {
+        let config = config();
+        let manager = RedisConnectionManager::new(config.redis_addr.unwrap_or_default())
+            .expect("connection manager");
+        let pool: r2d2::Pool<RedisConnectionManager> = r2d2::Pool::builder()
+            .max_size(config.redis_max_workers.unwrap() as u32)
+            .build(manager)
+            .expect("db pool");
+        Self { pool }
+    }
+
+    pub fn new_with_workers(workers: u32) -> Self {
+        let config = config();
+        let manager = RedisConnectionManager::new(config.redis_addr.unwrap_or_default())
+            .expect("connection manager");
+        let pool: r2d2::Pool<RedisConnectionManager> = r2d2::Pool::builder()
+            .max_size(workers)
+            .build(manager)
+            .expect("db pool");
+        Self { pool }
+    }
+
+    pub fn get(&self) -> Connection {
+        self.pool.get().unwrap()
+    }
 }
 
 pub fn get<T: Clone + Default + FromRedisValue + ToRedisArgs>(
