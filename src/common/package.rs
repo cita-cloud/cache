@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use crate::cita_cloud::evm::constant::STORE_ADDRESS;
+use crate::common::constant::block_count;
 use crate::common::crypto::Address;
 use crate::common::util::{parse_addr, parse_value};
 use crate::rest_api::post::PackageTx;
@@ -44,7 +45,7 @@ impl Package {
             to: parse_addr(STORE_ADDRESS)?,
             data: serialize(self.clone()),
             value: parse_value("0x0")?.to_vec(),
-            block_count: 20,
+            block_count: block_count(),
         })
     }
 }

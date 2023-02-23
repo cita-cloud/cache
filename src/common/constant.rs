@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::redis::Pool;
-use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient};
+use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, RpcClients};
+use efficient_sm2::KeyPair;
 use tokio::sync::OnceCell;
 
 pub const SUCCESS: u64 = 1;
@@ -26,6 +26,7 @@ pub const HASH_TYPE: &str = "hash";
 pub const SET_TYPE: &str = "set";
 pub const ZSET_TYPE: &str = "zset";
 pub const VAL_TYPE: &str = "val";
+pub const STREAM_TYPE: &str = "stream";
 
 pub const ROLLUP_WRITE_ENABLE: &str = "rollup_write_enable";
 
@@ -34,6 +35,9 @@ pub const CURRENT_BATCH_NUMBER: &str = "current_batch_number";
 pub const VALIDATOR_BATCH_NUMBER: &str = "validator_batch_number";
 pub const CURRENT_FAKE_BLOCK_HASH: &str = "current_fake_block_hash";
 pub const PACKAGED_TX: &str = "packaged_tx";
+pub const STREAM_ID: &str = "stream_id";
+pub const ENQUEUE: &str = "enqueue";
+pub const EXPIRE: &str = "expire";
 
 pub const VALIDATE_TX_BUFFER: &str = "validate_tx_hash";
 
@@ -52,32 +56,45 @@ pub const TX: &str = "tx";
 pub const CONTRACT_KEY: &str = "contract";
 pub const EXPIRED_KEY_EVENT_AT_ALL_DB: &str = "__keyevent@*__:expired";
 
-pub static REDIS_POOL: OnceCell<Pool> = OnceCell::const_new();
-pub static CONTROLLER_CLIENT: OnceCell<ControllerClient> = OnceCell::const_new();
-pub static EXECUTOR_CLIENT: OnceCell<ExecutorClient> = OnceCell::const_new();
-pub static LOCAL_EXECUTOR_CLIENT: OnceCell<ExecutorClient> = OnceCell::const_new();
-pub static EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
-pub static LOCAL_EVM_CLIENT: OnceCell<EvmClient> = OnceCell::const_new();
-pub static CRYPTO_CLIENT: OnceCell<CryptoClient> = OnceCell::const_new();
-pub static ROUGH_INTERNAL: OnceCell<u64> = OnceCell::const_new();
 pub static CACHE_CONFIG: OnceCell<CacheConfig> = OnceCell::const_new();
-
-pub fn rough_internal() -> u64 {
-    *ROUGH_INTERNAL.get().unwrap() * ONE_THOUSAND
-}
-
-pub fn controller() -> ControllerClient {
-    CONTROLLER_CLIENT.get().unwrap().clone()
-}
-
-pub fn local_executor() -> ExecutorClient {
-    LOCAL_EXECUTOR_CLIENT.get().unwrap().clone()
-}
-
-pub fn evm() -> EvmClient {
-    EVM_CLIENT.get().unwrap().clone()
-}
+pub static RPC_CLIENTS: OnceCell<
+    RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
+> = OnceCell::const_new();
+pub static KEY_PAIR: OnceCell<KeyPair> = OnceCell::const_new();
 
 pub fn config() -> CacheConfig {
     CACHE_CONFIG.get().unwrap().clone()
 }
+
+fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> {
+    RPC_CLIENTS.get().unwrap().clone()
+}
+
+pub fn rough_internal() -> u64 {
+    config().rough_internal.unwrap_or_default() * ONE_THOUSAND
+}
+
+pub fn block_count() -> u64 {
+    config().packaged_tx_vub.unwrap_or_default()
+}
+
+// #[warn(dead_code)]
+// pub fn crypto() -> CryptoClient {
+//     rpc_clients().crypto
+// }
+
+pub fn controller() -> ControllerClient {
+    rpc_clients().controller
+}
+
+pub fn local_executor() -> ExecutorClient {
+    rpc_clients().local_executor
+}
+
+pub fn evm() -> EvmClient {
+    rpc_clients().evm
+}
+
+// pub fn keypair() -> KeyPair {
+//     KEY_PAIR.get().unwrap().clone()
+// }

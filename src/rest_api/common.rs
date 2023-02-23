@@ -89,6 +89,7 @@ call,
 create,
 send_tx,
 change_role,
+version,
 ),
 components(
 schemas(SuccessResult, FailureResult, CreateContract<'_>, SendTx<'_>, Call<'_>, ChangeRole)

@@ -23,25 +23,19 @@ use crate::cita_cloud::controller::ControllerClient;
 use crate::cita_cloud::crypto::CryptoClient;
 use crate::cita_cloud::evm::EvmClient;
 use crate::cita_cloud::executor::ExecutorClient;
-use crate::common::cache_log::LOGGER;
-use crate::common::constant::{
-    CONTROLLER_CLIENT, CRYPTO_CLIENT, EVM_CLIENT, EXECUTOR_CLIENT, LOCAL_EVM_CLIENT,
-    LOCAL_EXECUTOR_CLIENT, RECEIPT, ROUGH_INTERNAL, TX,
-};
+use crate::common::cache_log::CacheLogger;
+use crate::common::constant::*;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
-use crate::core::context::Context;
+use crate::core::rpc_clients::RpcClients;
 use crate::redis::{
-    delete, exists, get, hdel, hget, hset, incr_one, keys, pool, psubscribe, smembers, srem, zadd,
-    zrange_withscores, zrem,
+    delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
+    zrange_withscores, zrem, Pool,
 };
-use ::log::LevelFilter;
-use anyhow::Result;
-use log::{set_logger, set_max_level};
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, receipt, receipt_inner,
-    system_config, tx,
+    system_config, tx, version,
 };
 use rest_api::post::{call, change_role, create, send_tx};
 use rocket::config::LogLevel;
@@ -55,15 +49,11 @@ use crate::cita_cloud::wallet::CryptoType;
 use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheManager};
-use crate::core::schedule_task::{
-    CheckTxTask, CommitTxTask, EvictExpiredKeyTask, LazyEvictExpiredKeyTask, PollTxsTask,
-    ReplayTask, ScheduleTask, UsefulParamTask,
-};
+use crate::core::schedule_task::*;
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
 use rocket::figment::{Figment, Profile};
 use serde_json::{json, Value};
-
 #[macro_use]
 extern crate rocket;
 
@@ -91,6 +81,7 @@ fn rocket(figment: Figment) -> Rocket<Build> {
                 create,
                 send_tx,
                 change_role,
+                version,
             ],
         )
         .register("/", catchers![uri_not_found])
@@ -107,7 +98,10 @@ pub struct CacheConfig {
     redis_addr: Option<String>,
     timing_internal_sec: Option<u64>,
     timing_batch: Option<u64>,
-    account: String,
+    redis_max_workers: Option<u64>,
+    stream_block_ms: Option<u64>,
+    stream_max_count: Option<u64>,
+    packaged_tx_vub: Option<u64>,
     log_level: LogLevel,
     //read cache timeout
     expire_time: Option<u64>,
@@ -128,7 +122,10 @@ impl Default for CacheConfig {
             redis_addr: Some("redis://default:rivtower@127.0.0.1:6379".to_string()),
             timing_internal_sec: Some(1),
             timing_batch: Some(100),
-            account: "757ca1c731a3d7e9bdbd0e22ee65918674a77bd7".to_string(),
+            stream_block_ms: Some(100),
+            stream_max_count: Some(10000),
+            packaged_tx_vub: Some(20),
+            redis_max_workers: Some(100),
             log_level: LogLevel::Normal,
             expire_time: Some(60),
             rough_internal: Some(10),
@@ -148,7 +145,10 @@ impl Display for CacheConfig {
             "redis_addr": self.redis_addr,
             "timing_internal_sec": self.timing_internal_sec,
             "timing_batch": self.timing_batch,
-            "account": self.account,
+            "stream_block_ms": self.stream_block_ms,
+            "stream_max_count": self.stream_max_count,
+            "packaged_tx_vub": self.packaged_tx_vub,
+            "redis_max_workers": self.redis_max_workers,
             "log_level": self.log_level,
             "expire_time": self.expire_time,
             "rough_internal": self.rough_internal,
@@ -157,60 +157,6 @@ impl Display for CacheConfig {
             "is_master": self.is_master,
         })
     }
-}
-
-async fn set_cache_logger(level: LevelFilter) -> Result<()> {
-    set_logger(&LOGGER)?;
-    set_max_level(level);
-    Ok(())
-}
-
-async fn set_param(
-    config: CacheConfig,
-) -> (
-    Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
-    u64,
-    isize,
-    usize,
-) {
-    let ctx: Context<ControllerClient, ExecutorClient, EvmClient, CryptoClient> = Context::new(
-        config.controller_addr.unwrap_or_default(),
-        config.executor_addr.unwrap_or_default(),
-        config.local_executor_addr.unwrap_or_default(),
-        config.crypto_addr,
-        config.redis_addr.unwrap_or_default(),
-        config.workers,
-    );
-    if let Err(e) = CONTROLLER_CLIENT.set(ctx.controller.clone()) {
-        panic!("store controller client error: {e:?}");
-    }
-    if let Err(e) = EXECUTOR_CLIENT.set(ctx.executor.clone()) {
-        panic!("store executor client error: {e:?}");
-    }
-    if let Err(e) = LOCAL_EXECUTOR_CLIENT.set(ctx.local_executor.clone()) {
-        panic!("store local executor client error: {e:?}");
-    }
-    if let Err(e) = EVM_CLIENT.set(ctx.evm.clone()) {
-        panic!("store evm client error: {e:?}");
-    }
-    if let Err(e) = LOCAL_EVM_CLIENT.set(ctx.local_evm.clone()) {
-        panic!("store evm client error: {e:?}");
-    }
-    if let Some(crypto) = ctx.crypto.clone() {
-        if let Err(e) = CRYPTO_CLIENT.set(crypto) {
-            panic!("store crypto client error: {e:?}");
-        }
-    }
-
-    if let Err(e) = ROUGH_INTERNAL.set(config.rough_internal.unwrap_or_default()) {
-        panic!("set rough internal fail: {e:?}")
-    }
-    (
-        ctx,
-        config.timing_internal_sec.unwrap_or_default(),
-        config.timing_batch.unwrap_or_default() as isize,
-        config.expire_time.unwrap_or_default() as usize,
-    )
 }
 
 #[rocket::main]
@@ -224,51 +170,37 @@ async fn main() {
             Config::DEFAULT_PROFILE,
         ));
     let config = figment.extract::<CacheConfig>().unwrap_or_default();
-    if let Err(e) = set_cache_logger(LevelFilter::from(config.log_level)).await {
+    if let Err(e) = CACHE_CONFIG.set(config.clone()) {
+        panic!("store cache config error: {e:?}");
+    }
+    if let Err(e) = CacheLogger::set_up() {
         panic!("set cache logger failed: {e}");
     }
+
     info!("cache config: {}", config.display());
-    let (ctx, timing_internal_sec, timing_batch, expire_time) = set_param(config.clone()).await;
-    match BlockContext::set_up(expire_time, config.crypto_type, config.is_master).await {
+    let rpc_clients: RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> =
+        RpcClients::new();
+
+    if let Err(e) = RPC_CLIENTS.set(rpc_clients.clone()) {
+        panic!("store rpc clients error: {e}");
+    }
+
+    let redis_pool = Pool::new();
+    let mut con = redis_pool.get();
+    match BlockContext::set_up(&mut con).await {
         Ok(_) => info!("block context set up success!"),
         Err(e) => warn!("block context set up fail: {}", e),
     }
-    match CacheManager::set_up().await {
+    match CacheManager::set_up(&mut con) {
         Ok(_) => info!("cache manager set up success!"),
         Err(e) => warn!("cache manager set up fail: {}", e),
     }
-    let seconds = timing_internal_sec * 1000;
-    tokio::spawn(CommitTxTask::schedule(seconds, timing_batch, expire_time));
-    tokio::spawn(CheckTxTask::schedule(
-        2 * seconds,
-        timing_batch,
-        expire_time,
-    ));
-    tokio::spawn(EvictExpiredKeyTask::schedule(
-        seconds * 10,
-        timing_batch,
-        expire_time,
-    ));
-    tokio::spawn(PollTxsTask::schedule(
-        timing_internal_sec,
-        timing_batch,
-        expire_time,
-    ));
-    tokio::spawn(ReplayTask::schedule(seconds, timing_batch, expire_time));
-    tokio::spawn(LazyEvictExpiredKeyTask::schedule(
-        seconds * 2,
-        timing_batch,
-        expire_time,
-    ));
-    tokio::spawn(UsefulParamTask::schedule(
-        seconds,
-        timing_batch,
-        expire_time,
-    ));
 
+    let rt = ScheduleTaskManager::setup();
+    let _ = rt.enter();
     let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<CacheConfig>());
 
-    if let Err(e) = rocket.manage(ctx).launch().await {
+    if let Err(e) = rocket.manage(rpc_clients).manage(redis_pool).launch().await {
         error!("Whoops! Rocket didn't launch!");
         // We drop the error to get a Rocket-formatted panic.
         drop(e);
