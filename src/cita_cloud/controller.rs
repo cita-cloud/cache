@@ -295,7 +295,6 @@ pub trait TransactionSenderBehaviour {
         con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
-        need_package: bool,
     ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync;
@@ -305,7 +304,6 @@ pub trait TransactionSenderBehaviour {
         con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
-        need_package: bool,
     ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync;
@@ -341,7 +339,6 @@ where
         con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
-        need_package: bool,
     ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync,
@@ -357,13 +354,7 @@ where
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
-        CacheManager::enqueue(
-            con,
-            hex_without_0x(hash),
-            buf,
-            valid_until_block,
-            need_package,
-        )?;
+        CacheManager::enqueue(con, hex_without_0x(hash), buf, valid_until_block)?;
         Ok(Hash::try_from_slice(hash)?)
     }
 
@@ -372,7 +363,6 @@ where
         con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
-        _need_package: bool,
     ) -> Result<Hash>
     where
         S: SignerBehaviour + Send + Sync,

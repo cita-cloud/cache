@@ -71,11 +71,11 @@ fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, Cryp
 }
 
 pub fn rough_internal() -> u64 {
-    config().rough_internal.unwrap_or_default() * ONE_THOUSAND
+    config().rough_internal.unwrap() * ONE_THOUSAND
 }
 
 pub fn block_count() -> u64 {
-    config().packaged_tx_vub.unwrap_or_default()
+    config().packaged_tx_vub.unwrap()
 }
 
 // #[warn(dead_code)]

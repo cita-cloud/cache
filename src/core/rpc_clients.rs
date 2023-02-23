@@ -46,9 +46,9 @@ impl<Co: Clone, Ex: Clone, Ev: Clone, Cr: Clone> RpcClients<Co, Ex, Ev, Cr> {
     {
         let config = config();
         let (controller_addr, executor_addr, local_executor_addr, crypto_addr) = (
-            config.controller_addr.unwrap_or_default(),
-            config.executor_addr.unwrap_or_default(),
-            config.local_executor_addr.unwrap_or_default(),
+            config.controller_addr.unwrap(),
+            config.executor_addr.unwrap(),
+            config.local_executor_addr.unwrap(),
             config.crypto_addr,
         );
         let mut crypto = None;

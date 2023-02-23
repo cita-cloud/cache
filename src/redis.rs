@@ -28,8 +28,8 @@ pub struct Pool {
 impl Pool {
     pub fn new() -> Self {
         let config = config();
-        let manager = RedisConnectionManager::new(config.redis_addr.unwrap_or_default())
-            .expect("connection manager");
+        let manager =
+            RedisConnectionManager::new(config.redis_addr.unwrap()).expect("connection manager");
         let pool: r2d2::Pool<RedisConnectionManager> = r2d2::Pool::builder()
             .max_size(config.redis_max_workers.unwrap() as u32)
             .build(manager)
@@ -39,8 +39,8 @@ impl Pool {
 
     pub fn new_with_workers(workers: u32) -> Self {
         let config = config();
-        let manager = RedisConnectionManager::new(config.redis_addr.unwrap_or_default())
-            .expect("connection manager");
+        let manager =
+            RedisConnectionManager::new(config.redis_addr.unwrap()).expect("connection manager");
         let pool: r2d2::Pool<RedisConnectionManager> = r2d2::Pool::builder()
             .max_size(workers)
             .build(manager)

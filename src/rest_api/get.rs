@@ -87,7 +87,7 @@ pub async fn abi(
     match CacheManager::load_or_query_proto(
         con,
         key("abi".to_string(), address.to_string()),
-        config.expire_time.unwrap_or_default() as usize,
+        config.expire_time.unwrap(),
         ctx.evm.get_abi(data),
     )
     .await
@@ -122,7 +122,7 @@ pub async fn balance(
     match CacheManager::load_or_query_proto(
         con,
         key("balance".to_string(), address.to_string()),
-        config.expire_time.unwrap_or_default() as usize,
+        config.expire_time.unwrap(),
         ctx.evm.get_balance(data),
     )
     .await
@@ -149,7 +149,7 @@ pub async fn block(
 ) -> Json<CacheResult<Value>> {
     info!("get-block hash_or_height {}", hash_or_height);
     let hash_or_height = remove_0x(hash_or_height);
-    let expire_time = config.expire_time.unwrap_or_default() as usize;
+    let expire_time = config.expire_time.unwrap();
     let con = &mut pool.get();
 
     let result = if let Ok(data) = parse_u64(hash_or_height) {
@@ -205,7 +205,7 @@ pub async fn code(
     match CacheManager::load_or_query_proto(
         con,
         key("code".to_string(), address.to_string()),
-        config.expire_time.unwrap_or_default() as usize,
+        config.expire_time.unwrap(),
         ctx.evm.get_code(data),
     )
     .await
@@ -240,7 +240,7 @@ pub async fn tx(
     match CacheManager::load_or_query_proto(
         con,
         key("tx".to_string(), hash.to_string()),
-        config.expire_time.unwrap_or_default() as usize,
+        config.expire_time.unwrap(),
         ctx.controller.get_tx(data),
     )
     .await
@@ -275,7 +275,7 @@ pub async fn account_nonce(
     match CacheManager::load_or_query_proto(
         con,
         key("account-nonce".to_string(), address.to_string()),
-        config.expire_time.unwrap_or_default() as usize,
+        config.expire_time.unwrap(),
         ctx.evm.get_tx_count(data),
     )
     .await
@@ -310,8 +310,8 @@ pub async fn receipt(
     match CacheManager::load_or_query_proto(
         con,
         key("receipt".to_string(), hash.to_string()),
-        config.expire_time.unwrap_or_default() as usize,
-        ctx.local_evm.get_receipt(data),
+        config.expire_time.unwrap(),
+        ctx.evm.get_receipt(data),
     )
     .await
     {
@@ -320,16 +320,16 @@ pub async fn receipt(
     }
 }
 
-///Get inner tx receipt by hash
-#[get("/get-receipt-inner/<hash>")]
+///Get local tx receipt by hash
+#[get("/get-receipt-local/<hash>")]
 #[utoipa::path(
 get,
-path = "/api/get-receipt-inner/{hash}",
+path = "/api/get-receipt-local/{hash}",
 params(
 ("hash", description = "The tx hash"),
 )
 )]
-pub async fn receipt_inner(
+pub async fn receipt_local(
     hash: &str,
     pool: &State<Pool>,
     config: &State<CacheConfig>,
@@ -345,8 +345,8 @@ pub async fn receipt_inner(
     match CacheManager::load_or_query_proto(
         con,
         key("receipt-inner".to_string(), hash.to_string()),
-        config.expire_time.unwrap_or_default() as usize,
-        ctx.evm.get_receipt(data),
+        config.expire_time.unwrap(),
+        ctx.local_evm.get_receipt(data),
     )
     .await
     {
@@ -386,7 +386,7 @@ pub async fn block_hash(
     match CacheManager::load_or_query_array_like(
         con,
         key("block-hash".to_string(), block_number.to_string()),
-        config.expire_time.unwrap_or_default() as usize,
+        config.expire_time.unwrap(),
         ctx.controller.get_block_hash(block_number as u64),
     )
     .await

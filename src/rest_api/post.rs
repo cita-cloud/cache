@@ -17,7 +17,7 @@ use std::{u64, usize};
 use crate::cita_cloud::controller::TransactionSenderBehaviour;
 use crate::cita_cloud::evm::EvmBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
-use crate::cita_cloud::wallet::{MaybeLocked, MultiCryptoAccount};
+use crate::cita_cloud::wallet::MaybeLocked;
 use crate::common::context::BlockContext;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
@@ -39,12 +39,7 @@ use utoipa::ToSchema;
 
 #[tonic::async_trait]
 pub trait ToTx {
-    async fn to(
-        &self,
-        con: &mut Connection,
-        account: &MultiCryptoAccount,
-        evm: EvmClient,
-    ) -> Result<CloudNormalTransaction>;
+    async fn to(&self, con: &mut Connection, evm: EvmClient) -> Result<CloudNormalTransaction>;
 
     async fn estimate_quota(
         &self,
@@ -57,6 +52,8 @@ pub trait ToTx {
         let quota = hex_without_0x(bytes_quota.as_slice());
         Ok(u64::from_str_radix(quota.as_str(), 16)?)
     }
+
+    fn with_default(&mut self) -> Self;
 }
 
 #[derive(Clone)]
@@ -70,20 +67,14 @@ pub struct PackageTx {
 
 #[tonic::async_trait]
 impl ToTx for PackageTx {
-    async fn to(
-        &self,
-        con: &mut Connection,
-        _account: &MultiCryptoAccount,
-        _evm: EvmClient,
-    ) -> Result<CloudNormalTransaction> {
+    async fn to(&self, con: &mut Connection, evm: EvmClient) -> Result<CloudNormalTransaction> {
         let current = BlockContext::current_cita_height(con)?;
         let valid_until_block: u64 = current + self.block_count;
         let to = self.to.clone().to_vec();
         let data = self.data.clone();
-        // let quota = self
-        //     .estimate_quota(evm, self.from, self.to, self.data.clone())
-        //     .await?;
-        let quota = 21000;
+        let quota = self
+            .estimate_quota(evm, self.from, self.to, self.data.clone())
+            .await?;
         let value = self.value.clone();
         let system_config = BlockContext::system_config(con)?;
         let version = system_config.version;
@@ -99,6 +90,20 @@ impl ToTx for PackageTx {
             valid_until_block,
             chain_id,
         })
+    }
+
+    async fn estimate_quota(
+        &self,
+        _evm: EvmClient,
+        _from: Address,
+        _to: Address,
+        _data: Vec<u8>,
+    ) -> Result<u64> {
+        Ok(21000)
+    }
+
+    fn with_default(&mut self) -> Self {
+        self.clone()
     }
 }
 
@@ -132,16 +137,12 @@ impl Default for CreateContract {
 }
 #[tonic::async_trait]
 impl ToTx for CreateContract {
-    async fn to(
-        &self,
-        con: &mut Connection,
-        account: &MultiCryptoAccount,
-        evm: EvmClient,
-    ) -> Result<CloudNormalTransaction> {
+    async fn to(&self, con: &mut Connection, evm: EvmClient) -> Result<CloudNormalTransaction> {
         let current = BlockContext::current_cita_height(con)?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
         let to = Vec::new();
         let data = parse_data(self.data.clone().as_str())?;
+        let account = BlockContext::current_account(con)?;
         let quota = self
             .estimate_quota(
                 evm,
@@ -165,6 +166,20 @@ impl ToTx for CreateContract {
             valid_until_block,
             chain_id,
         })
+    }
+
+    fn with_default(&mut self) -> Self {
+        let default = Self::default();
+        if self.value.is_none() {
+            self.value = default.value;
+        }
+        if self.block_count.is_none() {
+            self.block_count = default.block_count;
+        }
+        if self.local_execute.is_none() {
+            self.local_execute = default.local_execute;
+        }
+        self.clone()
     }
 }
 
@@ -195,28 +210,22 @@ impl Default for SendTx {
 
 #[tonic::async_trait]
 impl ToTx for SendTx {
-    async fn to(
-        &self,
-        con: &mut Connection,
-        _account: &MultiCryptoAccount,
-        _evm: EvmClient,
-    ) -> Result<CloudNormalTransaction> {
+    async fn to(&self, con: &mut Connection, evm: EvmClient) -> Result<CloudNormalTransaction> {
         let current = BlockContext::current_cita_height(con)?;
         let valid_until_block: u64 = (current as i64 + self.block_count.unwrap_or_default()) as u64;
 
         let to = parse_addr(self.to.clone().as_str())?;
         let data = parse_data(self.data.clone().unwrap_or_default().as_str())?;
         let value = parse_value(self.value.clone().unwrap_or_default().as_str())?.to_vec();
-
-        // let quota = self
-        //     .estimate_quota(
-        //         evm,
-        //         Address::try_from_slice(account.address())?,
-        //         to,
-        //         data.clone(),
-        //     )
-        //     .await?;
-        let quota = 300000;
+        let account = BlockContext::current_account(con)?;
+        let quota = self
+            .estimate_quota(
+                evm,
+                Address::try_from_slice(account.address())?,
+                to,
+                data.clone(),
+            )
+            .await?;
 
         let system_config = BlockContext::system_config(con)?;
         let version = system_config.version;
@@ -233,6 +242,33 @@ impl ToTx for SendTx {
             chain_id,
         })
     }
+
+    async fn estimate_quota(
+        &self,
+        _evm: EvmClient,
+        _from: Address,
+        _to: Address,
+        _data: Vec<u8>,
+    ) -> Result<u64> {
+        Ok(300000)
+    }
+
+    fn with_default(&mut self) -> Self {
+        let default = Self::default();
+        if self.data.is_none() {
+            self.data = default.data;
+        }
+        if self.value.is_none() {
+            self.value = default.value;
+        }
+        if self.block_count.is_none() {
+            self.block_count = default.block_count;
+        }
+        if self.local_execute.is_none() {
+            self.local_execute = default.local_execute;
+        }
+        self.clone()
+    }
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
@@ -244,6 +280,7 @@ pub struct Call {
     pub data: String,
     #[schema(example = 0)]
     pub height: Option<u64>,
+    pub local_execute: Option<bool>,
 }
 
 impl Default for Call {
@@ -253,6 +290,7 @@ impl Default for Call {
             to: "0x6ae15329e75680b1281f14a6d41252938c4a4d6d".to_string(),
             data: "0x06661abd".to_string(),
             height: Some(0),
+            local_execute: Some(false),
         }
     }
 }
@@ -265,15 +303,13 @@ async fn create_contract(
 ) -> Result<Hash> {
     let maybe: MaybeLocked = BlockContext::current_account(con)?;
     let account = maybe.unlocked()?;
-    let tx = create_contract.to(con, account, evm.clone()).await?;
-    controller
-        .send_raw_tx_async(
-            con,
-            account,
-            tx,
-            create_contract.local_execute.unwrap_or_default(),
-        )
-        .await
+    let tx = create_contract.to(con, evm.clone()).await?;
+    let flag = create_contract.local_execute.unwrap_or_default();
+    if flag {
+        controller.send_raw_tx_async(con, account, tx).await
+    } else {
+        controller.send_raw_tx(con, account, tx).await
+    }
 }
 
 ///Change role online
@@ -299,13 +335,20 @@ path = "/api/create",
 request_body = CreateContract,
 )]
 pub async fn create(
-    result: Json<CreateContract>,
+    mut result: Json<CreateContract>,
     pool: &State<Pool>,
     ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     let con = &mut pool.get();
     if let Ok(true) = BlockContext::is_master(con) {
-        match create_contract(con, ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
+        match create_contract(
+            con,
+            ctx.local_evm.clone(),
+            ctx.controller.clone(),
+            result.0.with_default(),
+        )
+        .await
+        {
             Ok(data) => Json(success(data.to_json())),
             Err(e) => Json(failure(e)),
         }
@@ -322,10 +365,13 @@ async fn create_tx(
 ) -> Result<Hash> {
     let maybe: MaybeLocked = BlockContext::current_account(con)?;
     let account = maybe.unlocked()?;
-    let tx = send_tx.to(con, account, evm.clone()).await?;
-    controller
-        .send_raw_tx_async(con, account, tx, send_tx.local_execute.unwrap_or_default())
-        .await
+    let tx = send_tx.to(con, evm.clone()).await?;
+    let flag = send_tx.local_execute.unwrap_or_default();
+    if flag {
+        controller.send_raw_tx_async(con, account, tx).await
+    } else {
+        controller.send_raw_tx(con, account, tx).await
+    }
 }
 
 ///Send Transaction
@@ -336,13 +382,20 @@ path = "/api/sendTx",
 request_body = SendTx,
 )]
 pub async fn send_tx(
-    result: Json<SendTx>,
+    mut result: Json<SendTx>,
     pool: &State<Pool>,
     ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
 ) -> Json<CacheResult<Value>> {
     let con = &mut pool.get();
     if let Ok(true) = BlockContext::is_master(con) {
-        match create_tx(con, ctx.local_evm.clone(), ctx.controller.clone(), result.0).await {
+        match create_tx(
+            con,
+            ctx.local_evm.clone(),
+            ctx.controller.clone(),
+            result.0.with_default(),
+        )
+        .await
+        {
             Ok(data) => Json(success(data.to_json())),
             Err(e) => Json(failure(e)),
         }
@@ -368,12 +421,16 @@ async fn call_or_load(
     let to = parse_addr(result.to.as_str())?;
     let data = parse_data(result.data.as_str())?;
     let height = result.height.unwrap_or_default();
-    let expire_time = config.expire_time.unwrap() as usize;
+    let expire_time = config.expire_time.unwrap();
     CacheManager::load_or_query_proto(
         con,
         key,
         expire_time,
-        ctx.local_executor.call(from, to, data, height),
+        if result.local_execute.unwrap_or_default() {
+            ctx.local_executor.call(from, to, data, height)
+        } else {
+            ctx.executor.call(from, to, data, height)
+        },
     )
     .await
 }
