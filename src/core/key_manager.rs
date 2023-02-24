@@ -203,12 +203,7 @@ pub trait ValBehavior {
 
 #[tonic::async_trait]
 pub trait TxBehavior {
-    fn enqueue_tx(
-        con: &mut Connection,
-        hash_str: String,
-        tx: Vec<u8>,
-        need_package: bool,
-    ) -> Result<()>;
+    fn enqueue_tx(con: &mut Connection, hash_str: String, tx: Vec<u8>) -> Result<()>;
     fn commit_tx(con: &mut Connection, tx_hash: String, score: u64) -> Result<()>;
 
     fn original_tx(con: &mut Connection, tx_hash: String) -> Result<Vec<u8>>;
@@ -266,7 +261,6 @@ pub trait CacheBehavior:
         hash_str: String,
         tx: Vec<u8>,
         valid_util_block: u64,
-        need_package: bool,
     ) -> Result<()>;
     async fn load_or_query_array_like<F, T>(
         con: &mut Connection,
@@ -291,21 +285,21 @@ pub trait CacheBehavior:
     fn save_tx_content(
         con: &mut Connection,
         tx_hash: String,
-        tx: String,
+        tx: Vec<u8>,
         expire_time: usize,
     ) -> Result<()>;
 
     fn save_receipt_content(
         con: &mut Connection,
         tx_hash: String,
-        tx: String,
+        tx: Vec<u8>,
         expire_time: usize,
     ) -> Result<()>;
 
     fn save_error(
         con: &mut Connection,
         hash: String,
-        err_str: String,
+        err_str: Vec<u8>,
         expire_time: usize,
     ) -> Result<()>;
 
@@ -397,18 +391,8 @@ impl ExpiredBehavior for CacheManager {
 
 #[tonic::async_trait]
 impl TxBehavior for CacheManager {
-    fn enqueue_tx(
-        con: &mut Connection,
-        hash_str: String,
-        tx: Vec<u8>,
-        need_package: bool,
-    ) -> Result<()> {
-        let key = if need_package {
-            pack_uncommitted_tx_key()
-        } else {
-            uncommitted_tx_key()
-        };
-        zadd(con, key, hash_str.clone(), timestamp())?;
+    fn enqueue_tx(con: &mut Connection, hash_str: String, tx: Vec<u8>) -> Result<()> {
+        zadd(con, uncommitted_tx_key(), hash_str.clone(), timestamp())?;
         hset(con, hash_to_tx(), hash_str, tx)?;
         Ok(())
     }
@@ -556,10 +540,8 @@ impl PackBehavior for CacheManager {
 
                     let packaged_tx_obj = Package::new(batch_number, block.clone())
                         .to_packaged_tx(*account.address())?;
-                    let raw_tx = packaged_tx_obj.to(con, account, evm()).await?;
-                    let hash = controller()
-                        .send_raw_tx(con, account, raw_tx, false)
-                        .await?;
+                    let raw_tx = packaged_tx_obj.to(con, evm()).await?;
+                    let hash = controller().send_raw_tx(con, account, raw_tx).await?;
                     let hash_str = hex_without_0x(hash.as_slice());
                     Self::tag_tx(con, hash_str.clone())?;
 
@@ -732,10 +714,9 @@ impl CacheBehavior for CacheManager {
         hash_str: String,
         tx: Vec<u8>,
         valid_util_block: u64,
-        need_package: bool,
     ) -> Result<()> {
         Self::save_valid_until_block(con, hash_str.clone(), valid_util_block)?;
-        Self::enqueue_tx(con, hash_str, tx, need_package)?;
+        Self::enqueue_tx(con, hash_str, tx)?;
         Ok(())
     }
 
@@ -772,8 +753,13 @@ impl CacheBehavior for CacheManager {
     {
         if Self::exist_val(con, key.clone())? {
             let result: Vec<u8> = Self::load_val(con, key, expire_time)?;
-            let data: T = Message::decode(result.as_slice())?;
-            Ok(data.to_json())
+            match Message::decode(result.as_slice()) {
+                Ok(data) => {
+                    let val: T = data;
+                    Ok(val.to_json())
+                }
+                Err(_e) => Ok(Value::String(String::from_utf8(result)?)),
+            }
         } else {
             let val: T = f.await?;
             let mut val_bytes = Vec::with_capacity(val.encoded_len());
@@ -787,7 +773,7 @@ impl CacheBehavior for CacheManager {
     fn save_tx_content(
         con: &mut Connection,
         tx_hash: String,
-        content: String,
+        content: Vec<u8>,
         expire_time: usize,
     ) -> Result<()> {
         Self::set_ex(con, key(TX.to_string(), tx_hash), content, expire_time)?;
@@ -797,7 +783,7 @@ impl CacheBehavior for CacheManager {
     fn save_receipt_content(
         con: &mut Connection,
         tx_hash: String,
-        content: String,
+        content: Vec<u8>,
         expire_time: usize,
     ) -> Result<()> {
         Self::set_ex(con, key(RECEIPT.to_string(), tx_hash), content, expire_time)?;
@@ -807,11 +793,11 @@ impl CacheBehavior for CacheManager {
     fn save_error(
         con: &mut Connection,
         hash: String,
-        err_str: String,
+        err: Vec<u8>,
         expire_time: usize,
     ) -> Result<()> {
-        Self::save_tx_content(con, hash.clone(), err_str.clone(), expire_time)?;
-        Self::save_receipt_content(con, hash, err_str, expire_time)
+        Self::save_tx_content(con, hash.clone(), err.clone(), expire_time)?;
+        Self::save_receipt_content(con, hash, err, expire_time)
     }
 
     fn clean_up_expired_by_key(con: &mut Connection, expired_key: String) -> Result<String> {
@@ -880,10 +866,8 @@ impl CacheBehavior for CacheManager {
                             let maybe: MaybeLocked = BlockContext::current_account(con)?;
                             let account = maybe.unlocked()?;
                             let new_package = decoded_package.to_packaged_tx(*account.address())?;
-                            let raw_tx = new_package.to(con, account, evm()).await?;
-                            let new_hash = controller()
-                                .send_raw_tx(con, account, raw_tx, false)
-                                .await?;
+                            let raw_tx = new_package.to(con, evm()).await?;
+                            let new_hash = controller().send_raw_tx(con, account, raw_tx).await?;
                             warn!(
                                 "repackage batch: {}, new hash: {}",
                                 decoded_package.batch_number,
@@ -897,7 +881,7 @@ impl CacheBehavior for CacheManager {
                         CacheManager::save_error(
                             con,
                             tx_hash.clone(),
-                            format!("{e}"),
+                            format!("{e}").as_bytes().to_vec(),
                             expire_time * 5,
                         )?;
                         CacheManager::clean_up_tx(con, tx_hash.clone())?;
@@ -916,11 +900,13 @@ impl CacheBehavior for CacheManager {
             let (receipt, expire_time, is_ok) = match evm().get_receipt(hash).await {
                 Ok(receipt) => {
                     info!("get tx receipt success, hash: {}", tx_hash.clone());
-                    (receipt.display(), expire_time, true)
+                    let mut buf = Vec::with_capacity(receipt.encoded_len());
+                    receipt.encode(&mut buf)?;
+                    (buf, expire_time, true)
                 }
                 Err(e) => {
                     info!("retry -> get receipt, hash: {}, e: {}", tx_hash.clone(), e);
-                    (format!("{e}"), expire_time * 5, false)
+                    (format!("{e}").as_bytes().to_vec(), expire_time * 5, false)
                 }
             };
             CacheManager::save_receipt_content(con, tx_hash.clone(), receipt, expire_time)?;
@@ -928,11 +914,13 @@ impl CacheBehavior for CacheManager {
                 let (tx, expire_time) = match controller().get_tx(hash).await {
                     Ok(tx) => {
                         info!("get tx success, hash: {}", tx_hash.clone());
-                        (tx.display(), expire_time)
+                        let mut buf = Vec::with_capacity(tx.encoded_len());
+                        tx.encode(&mut buf)?;
+                        (buf, expire_time)
                     }
                     Err(e) => {
                         info!("retry -> get tx, hash: {}, e: {}", tx_hash.clone(), e);
-                        (format!("{e}"), expire_time * 5)
+                        (format!("{e}").as_bytes().to_vec(), expire_time * 5)
                     }
                 };
 
@@ -953,10 +941,8 @@ impl CacheBehavior for CacheManager {
                         let maybe: MaybeLocked = BlockContext::current_account(con)?;
                         let account = maybe.unlocked()?;
                         let new_package = decoded_package.to_packaged_tx(*account.address())?;
-                        let raw_tx = new_package.to(con, account, evm()).await?;
-                        let new_hash = controller()
-                            .send_raw_tx(con, account, raw_tx, false)
-                            .await?;
+                        let raw_tx = new_package.to(con, evm()).await?;
+                        let new_hash = controller().send_raw_tx(con, account, raw_tx).await?;
                         Self::clean_up_tx(con, tx_hash.clone())?;
                         Self::tag_tx(con, hex_without_0x(new_hash.as_slice()))?;
                         warn!("timeout repackage batch: {}.", decoded_package.batch_number);
@@ -965,7 +951,7 @@ impl CacheBehavior for CacheManager {
                     CacheManager::save_error(
                         con,
                         tx_hash.clone(),
-                        "timeout".to_string(),
+                        "timeout".to_string().as_bytes().to_vec(),
                         expire_time * 5,
                     )?;
                     CacheManager::clean_up_tx(con, tx_hash.clone())?;
@@ -1075,10 +1061,8 @@ impl CacheBehavior for CacheManager {
 
                                 let packaged_tx_obj = Package::new(batch_number, block.clone())
                                     .to_packaged_tx(*account.address())?;
-                                let raw_tx = packaged_tx_obj.to(con, account, evm()).await?;
-                                let hash = controller()
-                                    .send_raw_tx(con, account, raw_tx, false)
-                                    .await?;
+                                let raw_tx = packaged_tx_obj.to(con, evm()).await?;
+                                let hash = controller().send_raw_tx(con, account, raw_tx).await?;
                                 let hash_str = hex_without_0x(hash.as_slice());
                                 Self::tag_tx(con, hash_str.clone())?;
 

@@ -143,7 +143,7 @@ impl BlockContext {
 impl LocalBehaviour for BlockContext {
     async fn set_up(con: &mut Connection) -> Result<()> {
         let config = config();
-        Self::timing_update(con, config.expire_time.unwrap_or_default() as usize).await?;
+        Self::timing_update(con, config.expire_time.unwrap()).await?;
         Self::create_admin_account(con, config.crypto_type)?;
         if !Self::is_restart(con)? {
             Self::change_role(con, config.is_master)?;

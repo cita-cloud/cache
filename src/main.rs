@@ -34,7 +34,7 @@ use crate::redis::{
 };
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
-    abi, account_nonce, balance, block, block_hash, block_number, code, receipt, receipt_inner,
+    abi, account_nonce, balance, block, block_hash, block_number, code, receipt, receipt_local,
     system_config, tx, version,
 };
 use rest_api::post::{call, change_role, create, send_tx};
@@ -74,7 +74,7 @@ fn rocket(figment: Figment) -> Rocket<Build> {
                 tx,
                 account_nonce,
                 receipt,
-                receipt_inner,
+                receipt_local,
                 system_config,
                 block_hash,
                 call,
@@ -97,19 +97,62 @@ pub struct CacheConfig {
     crypto_addr: Option<String>,
     redis_addr: Option<String>,
     timing_internal_sec: Option<u64>,
-    timing_batch: Option<u64>,
+    timing_batch: Option<isize>,
     redis_max_workers: Option<u64>,
     stream_block_ms: Option<u64>,
     stream_max_count: Option<u64>,
     packaged_tx_vub: Option<u64>,
     log_level: LogLevel,
     //read cache timeout
-    expire_time: Option<u64>,
+    expire_time: Option<usize>,
     //collect expired keys in rough_internal seconds
     rough_internal: Option<u64>,
     workers: u64,
     crypto_type: CryptoType,
     is_master: bool,
+}
+
+impl CacheConfig {
+    pub fn with_default(&mut self) -> Self {
+        let default = Self::default();
+        if self.controller_addr.is_none() {
+            self.controller_addr = default.controller_addr;
+        }
+        if self.executor_addr.is_none() {
+            self.executor_addr = default.executor_addr;
+        }
+        if self.local_executor_addr.is_none() {
+            self.local_executor_addr = default.local_executor_addr;
+        }
+        if self.crypto_addr.is_none() {
+            self.crypto_addr = default.crypto_addr;
+        }
+        if self.redis_addr.is_none() {
+            self.redis_addr = default.redis_addr;
+        }
+        if self.timing_internal_sec.is_none() {
+            self.timing_internal_sec = default.timing_internal_sec;
+        }
+        if self.timing_batch.is_none() {
+            self.timing_batch = default.timing_batch;
+        }
+        if self.redis_max_workers.is_none() {
+            self.redis_max_workers = default.redis_max_workers;
+        }
+        if self.stream_block_ms.is_none() {
+            self.stream_block_ms = default.stream_block_ms;
+        }
+        if self.stream_max_count.is_none() {
+            self.stream_max_count = default.stream_max_count;
+        }
+        if self.packaged_tx_vub.is_none() {
+            self.packaged_tx_vub = default.packaged_tx_vub;
+        }
+        if self.rough_internal.is_none() {
+            self.rough_internal = default.rough_internal;
+        }
+        self.clone()
+    }
 }
 
 impl Default for CacheConfig {
@@ -169,7 +212,10 @@ async fn main() {
             "ROCKET_PROFILE",
             Config::DEFAULT_PROFILE,
         ));
-    let config = figment.extract::<CacheConfig>().unwrap_or_default();
+    let config = figment
+        .extract::<CacheConfig>()
+        .unwrap_or_default()
+        .with_default();
     if let Err(e) = CACHE_CONFIG.set(config.clone()) {
         panic!("store cache config error: {e:?}");
     }

@@ -302,9 +302,9 @@ impl ScheduleTaskManager {
         if let Err(e) = SCHEDULE_POOL.set(Pool::new_with_workers(10u32)) {
             panic!("store schedule pool failed, {}", e);
         }
-        let timing_internal_sec = config.timing_internal_sec.unwrap_or_default();
-        let timing_batch = config.timing_batch.unwrap_or_default() as isize;
-        let expire_time = config.expire_time.unwrap_or_default() as usize;
+        let timing_internal_sec = config.timing_internal_sec.unwrap();
+        let timing_batch = config.timing_batch.unwrap();
+        let expire_time = config.expire_time.unwrap();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name("schedule-thread")
             .worker_threads(10)
@@ -347,8 +347,8 @@ impl ScheduleTaskManager {
             expire_time,
         ));
         runtime.spawn(XaddTask::schedule(
-            config.stream_block_ms.unwrap_or_default(),
-            config.stream_max_count.unwrap_or_default() as isize,
+            config.stream_block_ms.unwrap(),
+            config.stream_max_count.unwrap() as isize,
             expire_time,
         ));
         runtime
