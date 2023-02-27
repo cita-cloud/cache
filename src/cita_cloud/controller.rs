@@ -21,9 +21,9 @@ use prost::Message;
 use crate::common::constant::ENQUEUE;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::util::hex_without_0x;
-use crate::core::key_manager::stream_key;
+use crate::core::key_manager::{CacheOnly, stream_key};
 use crate::redis::{xadd, Connection};
-use crate::{CacheBehavior, CacheManager};
+use crate::{CacheBehavior, CitaCloud, Master};
 use cita_cloud_proto::client::{InterceptedSvc, RPCClientTrait};
 use cita_cloud_proto::retry::RetryClient;
 use cita_cloud_proto::{
@@ -354,7 +354,7 @@ where
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
-        CacheManager::enqueue(con, hex_without_0x(hash), buf, valid_until_block)?;
+        Master::<CitaCloud>::enqueue(con, hex_without_0x(hash), buf, valid_until_block)?;
         Ok(Hash::try_from_slice(hash)?)
     }
 

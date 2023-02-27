@@ -22,7 +22,7 @@ use crate::common::context::BlockContext;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
 use crate::common::util::{hex_without_0x, parse_addr, parse_data, parse_value, remove_0x};
-use crate::core::key_manager::{contract_key, CacheBehavior, CacheManager};
+use crate::core::key_manager::{CacheOnly, contract_key};
 use crate::core::rpc_clients::RpcClients;
 use crate::redis::Connection;
 use crate::rest_api::common::{failure, success, CacheResult};
@@ -31,11 +31,13 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
+use cita_cloud_proto::executor::CallRequest;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use utoipa::ToSchema;
+use crate::core::key_manager::CacheBehavior;
 
 #[tonic::async_trait]
 pub trait ToTx {
@@ -48,7 +50,17 @@ pub trait ToTx {
         to: Address,
         data: Vec<u8>,
     ) -> Result<u64> {
-        let bytes_quota = evm.estimate_quota(from, to, data).await?.bytes_quota;
+        let req = CallRequest {
+            from: from.to_vec(),
+            to: to.to_vec(),
+            // This is `executor_evm` specific calling convention.
+            // `executor_chaincode` uses args[0] for payload.
+            // But since no one uses chaincode, we may just use the evm's convention.
+            method: data,
+            args: Vec::new(),
+            height: 0,
+        };
+        let bytes_quota = evm.estimate_quota(req).await?.bytes_quota;
         let quota = hex_without_0x(bytes_quota.as_slice());
         Ok(u64::from_str_radix(quota.as_str(), 16)?)
     }
@@ -422,7 +434,7 @@ async fn call_or_load(
     let data = parse_data(result.data.as_str())?;
     let height = result.height.unwrap_or_default();
     let expire_time = config.expire_time.unwrap();
-    CacheManager::load_or_query_proto(
+    CacheOnly::load_or_query_proto(
         con,
         key,
         expire_time,

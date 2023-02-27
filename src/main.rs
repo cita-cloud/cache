@@ -18,7 +18,9 @@ mod core;
 mod health_check;
 mod redis;
 mod rest_api;
+mod interface;
 
+use moka::future::Cache;
 use crate::cita_cloud::controller::ControllerClient;
 use crate::cita_cloud::crypto::CryptoClient;
 use crate::cita_cloud::evm::EvmClient;
@@ -48,12 +50,15 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::cita_cloud::wallet::CryptoType;
 use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
-use crate::core::key_manager::{CacheBehavior, CacheManager};
+use crate::core::key_manager::{CacheBehavior, CacheManager, Master, MasterBehavior, Validator};
 use crate::core::schedule_task::*;
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
 use rocket::figment::{Figment, Profile};
 use serde_json::{json, Value};
+use tokio::sync::mpsc;
+use crate::interface::{CitaCloud, Layer1Adaptor};
+
 #[macro_use]
 extern crate rocket;
 
@@ -115,6 +120,9 @@ pub struct CacheConfig {
 impl CacheConfig {
     pub fn with_default(&mut self) -> Self {
         let default = Self::default();
+        if self.expire_time.is_none() {
+            self.expire_time = default.expire_time;
+        }
         if self.controller_addr.is_none() {
             self.controller_addr = default.controller_addr;
         }
@@ -237,12 +245,13 @@ async fn main() {
         Ok(_) => info!("block context set up success!"),
         Err(e) => warn!("block context set up fail: {}", e),
     }
-    match CacheManager::set_up(&mut con) {
-        Ok(_) => info!("cache manager set up success!"),
-        Err(e) => warn!("cache manager set up fail: {}", e),
-    }
-
-    let rt = ScheduleTaskManager::setup();
+    // let cache = CacheManager::new(CitaCloud::new());
+    // let mut master = Master::new(CitaCloud::new());
+    // match master.set_up(&mut con) {
+    //     Ok(_) => info!("master set up success!"),
+    //     Err(e) => info!("master set up failed, e: {}", e),
+    // }
+    let rt  = ScheduleTaskManager::new(CacheManager::new(CitaCloud::new())).setup();
     let _ = rt.enter();
     let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<CacheConfig>());
 

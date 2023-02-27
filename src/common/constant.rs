@@ -66,7 +66,7 @@ pub fn config() -> CacheConfig {
     CACHE_CONFIG.get().unwrap().clone()
 }
 
-fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> {
+pub fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> {
     RPC_CLIENTS.get().unwrap().clone()
 }
 

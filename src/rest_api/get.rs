@@ -19,13 +19,11 @@ use crate::cita_cloud::evm::EvmBehaviour;
 use crate::common::crypto::sm::{sm2_generate_secret_key, sm2_sign};
 use crate::common::display::Display;
 use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
-use crate::core::key_manager::{key, CacheBehavior, CacheManager};
+use crate::core::key_manager::{CacheOnly, key};
 use crate::core::rpc_clients::RpcClients;
 use crate::redis::Pool;
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{
-    BlockContext, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash,
-};
+use crate::{BlockContext, CacheBehavior, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash, Cache, CacheManager, Layer1Adaptor};
 use anyhow::anyhow;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -84,7 +82,7 @@ pub async fn abi(
     };
     let con = &mut pool.get();
 
-    match CacheManager::load_or_query_proto(
+    match CacheOnly::load_or_query_proto(
         con,
         key("abi".to_string(), address.to_string()),
         config.expire_time.unwrap(),
@@ -119,7 +117,7 @@ pub async fn balance(
         Err(e) => return Json(failure(e)),
     };
     let con = &mut pool.get();
-    match CacheManager::load_or_query_proto(
+    match CacheOnly::load_or_query_proto(
         con,
         key("balance".to_string(), address.to_string()),
         config.expire_time.unwrap(),
@@ -151,9 +149,8 @@ pub async fn block(
     let hash_or_height = remove_0x(hash_or_height);
     let expire_time = config.expire_time.unwrap();
     let con = &mut pool.get();
-
     let result = if let Ok(data) = parse_u64(hash_or_height) {
-        CacheManager::load_or_query_proto(
+        CacheOnly::load_or_query_proto(
             con,
             key("block".to_string(), hash_or_height.to_string()),
             expire_time,
@@ -163,7 +160,7 @@ pub async fn block(
     } else {
         match parse_hash(hash_or_height) {
             Ok(data) => {
-                CacheManager::load_or_query_proto(
+                CacheOnly::load_or_query_proto(
                     con,
                     key("block".to_string(), hash_or_height.to_string()),
                     expire_time,
@@ -202,7 +199,7 @@ pub async fn code(
         Err(e) => return Json(failure(e)),
     };
     let con = &mut pool.get();
-    match CacheManager::load_or_query_proto(
+    match CacheOnly::load_or_query_proto(
         con,
         key("code".to_string(), address.to_string()),
         config.expire_time.unwrap(),
@@ -237,7 +234,7 @@ pub async fn tx(
         Err(e) => return Json(failure(e)),
     };
     let con = &mut pool.get();
-    match CacheManager::load_or_query_proto(
+    match CacheOnly::load_or_query_proto(
         con,
         key("tx".to_string(), hash.to_string()),
         config.expire_time.unwrap(),
@@ -272,7 +269,7 @@ pub async fn account_nonce(
         Err(e) => return Json(failure(e)),
     };
     let con = &mut pool.get();
-    match CacheManager::load_or_query_proto(
+    match CacheOnly::load_or_query_proto(
         con,
         key("account-nonce".to_string(), address.to_string()),
         config.expire_time.unwrap(),
@@ -307,7 +304,7 @@ pub async fn receipt(
         Err(e) => return Json(failure(e)),
     };
     let con = &mut pool.get();
-    match CacheManager::load_or_query_proto(
+    match CacheOnly::load_or_query_proto(
         con,
         key("receipt".to_string(), hash.to_string()),
         config.expire_time.unwrap(),
@@ -342,7 +339,7 @@ pub async fn receipt_local(
         Err(e) => return Json(failure(e)),
     };
     let con = &mut pool.get();
-    match CacheManager::load_or_query_proto(
+    match CacheOnly::load_or_query_proto(
         con,
         key("receipt-inner".to_string(), hash.to_string()),
         config.expire_time.unwrap(),
@@ -383,7 +380,7 @@ pub async fn block_hash(
 ) -> Json<CacheResult<Value>> {
     info!("get-block-hash block_number {}", block_number);
     let con = &mut pool.get();
-    match CacheManager::load_or_query_array_like(
+    match CacheOnly::load_or_query_array_like(
         con,
         key("block-hash".to_string(), block_number.to_string()),
         config.expire_time.unwrap(),
