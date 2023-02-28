@@ -19,11 +19,14 @@ use crate::cita_cloud::evm::EvmBehaviour;
 use crate::common::crypto::sm::{sm2_generate_secret_key, sm2_sign};
 use crate::common::display::Display;
 use crate::common::util::{parse_addr, parse_hash, parse_u64, remove_0x};
-use crate::core::key_manager::{CacheOnly, key};
+use crate::core::key_manager::{key, CacheOnly};
 use crate::core::rpc_clients::RpcClients;
 use crate::redis::Pool;
 use crate::rest_api::common::{failure, success, CacheResult};
-use crate::{BlockContext, CacheBehavior, CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Hash, Cache, CacheManager, Layer1Adaptor};
+use crate::{
+    BlockContext, CacheBehavior, CacheConfig, ControllerClient, CryptoClient, EvmClient,
+    ExecutorClient, Hash,
+};
 use anyhow::anyhow;
 use rocket::serde::json::Json;
 use rocket::State;

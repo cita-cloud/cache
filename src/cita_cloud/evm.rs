@@ -199,17 +199,9 @@ mod tests {
     use super::*;
     use crate::common::util::parse_addr;
     use crate::common::util::parse_data;
-    use crate::interface::{Facade, Layer1Type};
-    use crate::Layer1Adaptor;
 
     #[test]
     fn test_constant() -> Result<()> {
-
-        tokio_test::block_on(async {
-            let adaptor: Box<dyn Layer1Adaptor> = Facade::from(Layer1Type::Local);
-            let a = adaptor.send_transaction(Vec::new()).await;
-            println!("a");
-        });
         // TODO: add sm crypto test
         parse_addr(STORE_ADDRESS)?;
         parse_addr(ABI_ADDRESS)?;

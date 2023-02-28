@@ -16,11 +16,10 @@ mod cita_cloud;
 mod common;
 mod core;
 mod health_check;
+mod interface;
 mod redis;
 mod rest_api;
-mod interface;
 
-use moka::future::Cache;
 use crate::cita_cloud::controller::ControllerClient;
 use crate::cita_cloud::crypto::CryptoClient;
 use crate::cita_cloud::evm::EvmClient;
@@ -50,14 +49,13 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::cita_cloud::wallet::CryptoType;
 use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
-use crate::core::key_manager::{CacheBehavior, CacheManager, Master, MasterBehavior, Validator};
+use crate::core::key_manager::{CacheBehavior, CacheOnly, Master, Validator};
 use crate::core::schedule_task::*;
+use crate::interface::{Layer1, Layer1Adaptor};
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
 use rocket::figment::{Figment, Profile};
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
-use crate::interface::{CitaCloud, Layer1Adaptor};
 
 #[macro_use]
 extern crate rocket;
@@ -108,6 +106,7 @@ pub struct CacheConfig {
     stream_max_count: Option<u64>,
     packaged_tx_vub: Option<u64>,
     log_level: LogLevel,
+    layer1_type: u64,
     //read cache timeout
     expire_time: Option<usize>,
     //collect expired keys in rough_internal seconds
@@ -115,6 +114,7 @@ pub struct CacheConfig {
     workers: u64,
     crypto_type: CryptoType,
     is_master: bool,
+    enable_evict: bool,
 }
 
 impl CacheConfig {
@@ -180,9 +180,11 @@ impl Default for CacheConfig {
             log_level: LogLevel::Normal,
             expire_time: Some(60),
             rough_internal: Some(10),
+            layer1_type: 0,
             workers: 1,
             crypto_type: CryptoType::Sm,
             is_master: true,
+            enable_evict: false,
         }
     }
 }
@@ -206,6 +208,9 @@ impl Display for CacheConfig {
             "workers": self.workers,
             "crypto_type": self.crypto_type,
             "is_master": self.is_master,
+            "enable_evict": self.enable_evict,
+            "layer1_type": self.layer1_type,
+            "expire_time": self.expire_time,
         })
     }
 }
@@ -238,20 +243,20 @@ async fn main() {
     if let Err(e) = RPC_CLIENTS.set(rpc_clients.clone()) {
         panic!("store rpc clients error: {e}");
     }
-
+    if let Err(e) = LAYER1.set(Layer1::new()) {
+        panic!("layer1 save error: {e}");
+    }
     let redis_pool = Pool::new();
     let mut con = redis_pool.get();
     match BlockContext::set_up(&mut con).await {
         Ok(_) => info!("block context set up success!"),
         Err(e) => warn!("block context set up fail: {}", e),
     }
-    // let cache = CacheManager::new(CitaCloud::new());
-    // let mut master = Master::new(CitaCloud::new());
-    // match master.set_up(&mut con) {
-    //     Ok(_) => info!("master set up success!"),
-    //     Err(e) => info!("master set up failed, e: {}", e),
-    // }
-    let rt  = ScheduleTaskManager::new(CacheManager::new(CitaCloud::new())).setup();
+    match CacheOnly::set_up(&mut con) {
+        Ok(_) => info!("cache set up success!"),
+        Err(e) => info!("cache set up failed, e: {}", e),
+    }
+    let rt = ScheduleTaskManager::setup();
     let _ = rt.enter();
     let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<CacheConfig>());
 

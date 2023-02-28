@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::interface::Layer1;
 use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, RpcClients};
 use efficient_sm2::KeyPair;
 use tokio::sync::OnceCell;
@@ -60,6 +61,7 @@ pub static CACHE_CONFIG: OnceCell<CacheConfig> = OnceCell::const_new();
 pub static RPC_CLIENTS: OnceCell<
     RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 > = OnceCell::const_new();
+pub static LAYER1: OnceCell<Layer1> = OnceCell::const_new();
 pub static KEY_PAIR: OnceCell<KeyPair> = OnceCell::const_new();
 
 pub fn config() -> CacheConfig {
@@ -70,6 +72,10 @@ pub fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, 
     RPC_CLIENTS.get().unwrap().clone()
 }
 
+pub fn layer1() -> Layer1 {
+    LAYER1.get().unwrap().clone()
+}
+
 pub fn rough_internal() -> u64 {
     config().rough_internal.unwrap() * ONE_THOUSAND
 }
@@ -78,23 +84,6 @@ pub fn block_count() -> u64 {
     config().packaged_tx_vub.unwrap()
 }
 
-// #[warn(dead_code)]
-// pub fn crypto() -> CryptoClient {
-//     rpc_clients().crypto
-// }
-
-pub fn controller() -> ControllerClient {
-    rpc_clients().controller
-}
-
 pub fn local_executor() -> ExecutorClient {
     rpc_clients().local_executor
 }
-
-pub fn evm() -> EvmClient {
-    rpc_clients().evm
-}
-
-// pub fn keypair() -> KeyPair {
-//     KEY_PAIR.get().unwrap().clone()
-// }

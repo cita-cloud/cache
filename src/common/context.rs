@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::cita_cloud::controller::{ControllerBehaviour, SignerBehaviour};
+use crate::cita_cloud::controller::SignerBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
-use crate::common::constant::{controller, local_executor, ADMIN_ACCOUNT};
+use crate::common::constant::{local_executor, ADMIN_ACCOUNT};
 use crate::common::util::{hex, parse_data, timestamp};
-use crate::core::key_manager::{admin_account_key, CacheOperator, cita_cloud_block_number_key, key_without_param, rollup_write_enable, system_config_key};
+use crate::core::key_manager::ValBehavior;
+use crate::core::key_manager::{
+    admin_account_key, cita_cloud_block_number_key, key_without_param, rollup_write_enable,
+    system_config_key, CacheOperator,
+};
 use crate::core::key_manager::{current_batch_number, current_fake_block_hash};
 use crate::redis::{set, Connection};
-use crate::{config, exists, get, incr_one, CacheBehavior, CryptoType, KEY_PAIR};
+use crate::{config, exists, get, incr_one, layer1, CryptoType, Layer1Adaptor, KEY_PAIR};
 use anyhow::{anyhow, Result};
 use cita_cloud_proto::{
     blockchain::{Block, BlockHeader, RawTransaction, RawTransactions},
@@ -29,7 +33,6 @@ use cita_cloud_proto::{
 use cloud_util::unix_now;
 use prost::Message;
 use std::cmp;
-use crate::core::key_manager::ValBehavior;
 
 #[tonic::async_trait]
 pub trait LocalBehaviour {
@@ -156,17 +159,14 @@ impl LocalBehaviour for BlockContext {
         } else {
             0
         };
+        let layer1 = layer1();
         CacheOperator::save_val(
             con,
             cita_cloud_block_number_key(),
-            cmp::max(controller().get_block_number(false).await?, num),
+            cmp::max(layer1.get_block_number(false).await?, num),
             expire_time * 2,
         )?;
-        let sys_config = controller().get_system_config().await?;
-        let mut sys_config_bytes = Vec::with_capacity(sys_config.encoded_len());
-        sys_config
-            .encode(&mut sys_config_bytes)
-            .expect("encode system config failed");
+        let sys_config_bytes = layer1.get_system_config().await?;
         CacheOperator::save_val(con, system_config_key(), sys_config_bytes, expire_time * 2)?;
         Ok(())
     }

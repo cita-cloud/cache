@@ -13,9 +13,10 @@
 // limitations under the License.
 
 use crate::common::context::BlockContext;
-use crate::core::key_manager::{CacheBehavior, CacheManager, PackBehavior, ValidatorBehavior};
+use crate::core::key_manager::MasterBehavior;
+use crate::core::key_manager::{CacheBehavior, CacheOnly, ValidatorBehavior};
 use crate::redis::{Connection, Pool};
-use crate::{config, LocalBehaviour};
+use crate::{config, LocalBehaviour, Master, Validator};
 use anyhow::Result;
 use tokio::time;
 // use tokio::time::MissedTickBehavior;
@@ -31,22 +32,13 @@ pub trait ScheduleTask {
 
     fn name() -> String;
 
-    fn enable(con: &mut Connection) -> Result<bool>;
-
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
         let mut internal = time::interval(time::Duration::from_millis(time_internal));
         let con = &mut get_con();
         loop {
             internal.tick().await;
-            match Self::enable(con) {
-                Ok(flag) => {
-                    if flag {
-                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
-                            warn!("[{} task] error: {}", Self::name(), e);
-                        }
-                    }
-                }
-                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
+            if let Err(e) = Self::task(con, timing_batch, expire_time).await {
+                warn!("[{} task] error: {}", Self::name(), e);
             }
         }
     }
@@ -57,15 +49,11 @@ pub struct CommitTxTask;
 #[tonic::async_trait]
 impl ScheduleTask for CommitTxTask {
     async fn task(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()> {
-        CacheManager::commit(con, timing_batch, expire_time).await
+        Master::commit(con, timing_batch, expire_time).await
     }
 
     fn name() -> String {
         "commit tx".to_string()
-    }
-
-    fn enable(con: &mut Connection) -> Result<bool> {
-        BlockContext::is_master(con)
     }
 
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
@@ -73,35 +61,10 @@ impl ScheduleTask for CommitTxTask {
         let con = &mut get_con();
         loop {
             internal.tick().await;
-            match Self::enable(con) {
-                Ok(flag) => {
-                    if flag {
-                        // info!("[{} task] ticked! and enabled!", Self::name());
-                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
-                            warn!("[{} task] error: {}", Self::name(), e);
-                        }
-                    }
-                }
-                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
+            if let Err(e) = Self::task(con, timing_batch, expire_time).await {
+                warn!("[{} task] error: {}", Self::name(), e);
             }
         }
-    }
-}
-
-pub struct PackTxTask;
-
-#[tonic::async_trait]
-impl ScheduleTask for PackTxTask {
-    async fn task(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()> {
-        CacheManager::package(con, timing_batch, expire_time).await
-    }
-
-    fn name() -> String {
-        "pack tx".to_string()
-    }
-
-    fn enable(con: &mut Connection) -> Result<bool> {
-        BlockContext::is_master(con)
     }
 }
 
@@ -110,15 +73,11 @@ pub struct CheckTxTask;
 #[tonic::async_trait]
 impl ScheduleTask for CheckTxTask {
     async fn task(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()> {
-        CacheManager::check(con, timing_batch, expire_time).await
+        Master::check(con, timing_batch, expire_time).await
     }
 
     fn name() -> String {
         "check tx".to_string()
-    }
-
-    fn enable(con: &mut Connection) -> Result<bool> {
-        BlockContext::is_master(con)
     }
 
     async fn schedule(time_internal: u64, timing_batch: isize, expire_time: usize) {
@@ -126,15 +85,8 @@ impl ScheduleTask for CheckTxTask {
         let con = &mut get_con();
         loop {
             internal.tick().await;
-            match Self::enable(con) {
-                Ok(flag) => {
-                    if flag {
-                        if let Err(e) = Self::task(con, timing_batch, expire_time).await {
-                            warn!("[{} task] error: {}", Self::name(), e);
-                        }
-                    }
-                }
-                Err(e) => warn!("[{} task] enable error: {}", Self::name(), e),
+            if let Err(e) = Self::task(con, timing_batch, expire_time).await {
+                warn!("[{} task] error: {}", Self::name(), e);
             }
         }
     }
@@ -145,15 +97,11 @@ pub struct LazyEvictExpiredKeyTask;
 #[tonic::async_trait]
 impl ScheduleTask for LazyEvictExpiredKeyTask {
     async fn task(con: &mut Connection, _: isize, _: usize) -> Result<()> {
-        CacheManager::try_lazy_evict(con).await
+        CacheOnly::try_lazy_evict(con).await
     }
 
     fn name() -> String {
         "lazy evict expired key".to_string()
-    }
-
-    fn enable(_con: &mut Connection) -> Result<bool> {
-        Ok(true)
     }
 }
 
@@ -162,15 +110,11 @@ pub struct EvictExpiredKeyTask;
 #[tonic::async_trait]
 impl ScheduleTask for EvictExpiredKeyTask {
     async fn task(con: &mut Connection, _: isize, _: usize) -> Result<()> {
-        CacheManager::sub_evict_event(con).await
+        CacheOnly::sub_evict_event(con).await
     }
 
     fn name() -> String {
         "evict expired key".to_string()
-    }
-
-    fn enable(_con: &mut Connection) -> Result<bool> {
-        Ok(true)
     }
 }
 
@@ -185,10 +129,6 @@ impl ScheduleTask for UsefulParamTask {
     fn name() -> String {
         "useful param task".to_string()
     }
-
-    fn enable(_con: &mut Connection) -> Result<bool> {
-        Ok(true)
-    }
 }
 
 pub struct PollTxsTask;
@@ -196,15 +136,11 @@ pub struct PollTxsTask;
 #[tonic::async_trait]
 impl ScheduleTask for PollTxsTask {
     async fn task(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()> {
-        CacheManager::poll(con, timing_batch, expire_time).await
+        Validator::poll(con, timing_batch, expire_time).await
     }
 
     fn name() -> String {
         "poll txs".to_string()
-    }
-
-    fn enable(con: &mut Connection) -> Result<bool> {
-        Ok(!BlockContext::is_master(con)?)
     }
 }
 
@@ -213,15 +149,11 @@ pub struct ReplayTask;
 #[tonic::async_trait]
 impl ScheduleTask for ReplayTask {
     async fn task(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()> {
-        CacheManager::replay(con, timing_batch, expire_time).await
+        Validator::replay(con, timing_batch, expire_time).await
     }
 
     fn name() -> String {
         "replay txs".to_string()
-    }
-
-    fn enable(con: &mut Connection) -> Result<bool> {
-        Ok(!BlockContext::is_master(con)?)
     }
 }
 
@@ -278,15 +210,10 @@ impl ScheduleTask for XaddTask {
         "xadd key".to_string()
     }
 
-    fn enable(_con: &mut Connection) -> Result<bool> {
-        Ok(true)
-    }
-
     async fn schedule(time_internal: u64, timing_batch: isize, _expire_time: usize) {
         let con = &mut get_con();
         loop {
-            if let Err(e) =
-                CacheManager::sub_xadd_stream(con, time_internal, timing_batch as usize).await
+            if let Err(e) = Master::sub_xadd_stream(con, time_internal, timing_batch as usize).await
             {
                 warn!("[{} task] enable error: {}", Self::name(), e);
             }
@@ -311,46 +238,51 @@ impl ScheduleTaskManager {
             .enable_all()
             .build()
             .expect("create tokio runtime");
-        runtime.spawn(CommitTxTask::schedule(
-            timing_internal_sec,
-            timing_batch,
-            expire_time,
-        ));
-        runtime.spawn(CheckTxTask::schedule(
-            2 * timing_internal_sec,
-            timing_batch,
-            expire_time,
-        ));
-        runtime.spawn(EvictExpiredKeyTask::schedule(
-            timing_internal_sec * 10,
-            timing_batch,
-            expire_time,
-        ));
-        runtime.spawn(PollTxsTask::schedule(
-            timing_internal_sec,
-            timing_batch,
-            expire_time,
-        ));
-        runtime.spawn(ReplayTask::schedule(
-            timing_internal_sec,
-            timing_batch,
-            expire_time,
-        ));
-        runtime.spawn(LazyEvictExpiredKeyTask::schedule(
-            timing_internal_sec * 2,
-            timing_batch,
-            expire_time,
-        ));
         runtime.spawn(UsefulParamTask::schedule(
             timing_internal_sec,
             timing_batch,
             expire_time,
         ));
-        runtime.spawn(XaddTask::schedule(
-            config.stream_block_ms.unwrap(),
-            config.stream_max_count.unwrap() as isize,
-            expire_time,
-        ));
+        if config.enable_evict {
+            runtime.spawn(EvictExpiredKeyTask::schedule(
+                timing_internal_sec * 10,
+                timing_batch,
+                expire_time,
+            ));
+            runtime.spawn(LazyEvictExpiredKeyTask::schedule(
+                timing_internal_sec * 2,
+                timing_batch,
+                expire_time,
+            ));
+        }
+        if config.is_master {
+            runtime.spawn(CommitTxTask::schedule(
+                timing_internal_sec,
+                timing_batch,
+                expire_time,
+            ));
+            runtime.spawn(CheckTxTask::schedule(
+                2 * timing_internal_sec,
+                timing_batch,
+                expire_time,
+            ));
+            runtime.spawn(XaddTask::schedule(
+                config.stream_block_ms.unwrap(),
+                config.stream_max_count.unwrap() as isize,
+                expire_time,
+            ));
+        } else {
+            runtime.spawn(PollTxsTask::schedule(
+                timing_internal_sec,
+                timing_batch,
+                expire_time,
+            ));
+            runtime.spawn(ReplayTask::schedule(
+                timing_internal_sec,
+                timing_batch,
+                expire_time,
+            ));
+        }
         runtime
     }
 }
