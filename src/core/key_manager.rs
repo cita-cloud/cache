@@ -242,10 +242,13 @@ impl ValBehavior for CacheOperator {
         val: T,
         expire_time: usize,
     ) -> Result<String> {
-        if exists(con, key.clone())? {
-            Self::update_expire(con, key.clone(), expire_time)?;
-        } else {
-            Self::create_expire(con, key.clone(), expire_time)?;
+        let config = config();
+        if config.enable_evict {
+            if exists(con, key.clone())? {
+                Self::update_expire(con, key.clone(), expire_time)?;
+            } else {
+                Self::create_expire(con, key.clone(), expire_time)?;
+            }
         }
         let result = crate::redis::set_ex(con, key, val, expire_time)?;
         Ok(result)
@@ -263,14 +266,18 @@ impl ValBehavior for CacheOperator {
         key: String,
         expire_time: usize,
     ) -> Result<T> {
-        let data = serialize(Expire::new(key.clone(), expire_time as u64));
-        let list = vec![("data".to_string(), data.as_slice())];
-        xadd::<&[u8]>(
-            con,
-            stream_key(EXPIRE.to_string()),
-            "*".to_string(),
-            list.as_slice(),
-        )?;
+        let config = config();
+        if config.enable_evict {
+            let data = serialize(Expire::new(key.clone(), expire_time as u64));
+            let list = vec![("data".to_string(), data.as_slice())];
+            xadd::<&[u8]>(
+                con,
+                stream_key(EXPIRE.to_string()),
+                "*".to_string(),
+                list.as_slice(),
+            )?;
+        }
+        crate::redis::expire(con, key.clone(), expire_time)?;
         Ok(get(con, key)?)
     }
 }
@@ -561,7 +568,7 @@ pub trait MasterBehavior {
     where
         S: SignerBehaviour + Send + Sync;
 
-    async fn enqueue_raw_tx_async<S>(
+    async fn enqueue_local_raw_tx<S>(
         con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
@@ -572,7 +579,13 @@ pub trait MasterBehavior {
 
     async fn check(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()>;
 
-    async fn sub_xadd_stream(
+    async fn sub_enqueue_stream(
+        con: &mut Connection,
+        time_internal: u64,
+        timing_batch: usize,
+    ) -> Result<()>;
+
+    async fn sub_expire_stream(
         con: &mut Connection,
         time_internal: u64,
         timing_batch: usize,
@@ -603,11 +616,13 @@ impl MasterBehavior for Master {
             None => empty.as_slice(),
         };
         raw.encode(&mut buf)?;
-        Self::enqueue(con, hex_without_0x(hash), buf, valid_until_block)?;
+        let hash_str = hex_without_0x(hash);
+        CacheOperator::save_valid_until_block(con, hash_str.clone(), valid_until_block)?;
+        CacheOperator::enqueue_tx(con, hash_str, buf)?;
         Ok(Hash::try_from_slice(hash)?)
     }
 
-    async fn enqueue_raw_tx_async<S>(
+    async fn enqueue_local_raw_tx<S>(
         con: &mut Connection,
         signer: &S,
         raw_tx: CloudNormalTransaction,
@@ -753,15 +768,13 @@ impl MasterBehavior for Master {
         Ok(())
     }
 
-    async fn sub_xadd_stream(
+    async fn sub_enqueue_stream(
         con: &mut Connection,
         time_internal: u64,
         timing_batch: usize,
     ) -> Result<()> {
-        let (enqueue_id, expire_id) = (
-            get::<String>(con, stream_id_key(ENQUEUE.to_string())).unwrap_or("0".to_string()),
-            get::<String>(con, stream_id_key(EXPIRE.to_string())).unwrap_or("0".to_string()),
-        );
+        let enqueue_id =
+            get::<String>(con, stream_id_key(ENQUEUE.to_string())).unwrap_or("0".to_string());
         let opts = if time_internal == 0 {
             StreamReadOptions::default().count(timing_batch)
         } else {
@@ -769,91 +782,104 @@ impl MasterBehavior for Master {
                 .block(time_internal as usize)
                 .count(timing_batch)
         };
-        let results: StreamReadReply = con.xread_options(
-            &[
-                stream_key(ENQUEUE.to_string()),
-                stream_key(EXPIRE.to_string()),
-            ],
-            &[enqueue_id, expire_id],
-            opts,
-        )?;
+        let results: StreamReadReply =
+            con.xread_options(&[stream_key(ENQUEUE.to_string())], &[enqueue_id], opts)?;
         if results.keys.is_empty() {
             return Ok(());
         }
         for item in results.keys {
-            match stream_key_suffix(item.key).as_str() {
-                ENQUEUE => {
-                    if item.ids.is_empty() {
-                        continue;
-                    }
-                    let last = item.ids.last().unwrap().clone();
-                    let maybe: MaybeLocked = BlockContext::current_account(con)?;
-                    let account = maybe.unlocked()?;
-                    let proposer = account.address().to_vec();
-                    let mut tx_list = Vec::new();
+            if stream_key_suffix(item.key).as_str() == ENQUEUE {
+                if item.ids.is_empty() {
+                    continue;
+                }
+                let last = item.ids.last().unwrap().clone();
+                let maybe: MaybeLocked = BlockContext::current_account(con)?;
+                let account = maybe.unlocked()?;
+                let proposer = account.address().to_vec();
+                let mut tx_list = Vec::new();
 
-                    for id in item.ids {
-                        let map = id.map;
-                        match map.get("data") {
-                            Some(RedisValue::Data(data)) => {
-                                let decoded: RawTransaction = Message::decode(data.as_slice())?;
-                                tx_list.push(decoded);
+                for id in item.ids {
+                    let map = id.map;
+                    match map.get("data") {
+                        Some(RedisValue::Data(data)) => {
+                            let decoded: RawTransaction = Message::decode(data.as_slice())?;
+                            tx_list.push(decoded);
+                        }
+                        _ => continue,
+                    };
+                }
+                let block =
+                    BlockContext::fake_block(con, proposer.clone(), tx_list.clone()).await?;
+                let size = tx_list.len();
+                if let Ok(res) = local_executor().exec(block.clone()).await {
+                    if let Some(status) = res.status {
+                        if status.code == 0 {
+                            let batch_number = BlockContext::get_batch_number(con).await?;
+
+                            for raw_tx in tx_list {
+                                CacheOperator::try_clean_contract(con, raw_tx)?;
                             }
-                            _ => continue,
-                        };
-                    }
-                    let block =
-                        BlockContext::fake_block(con, proposer.clone(), tx_list.clone()).await?;
-                    let size = tx_list.len();
-                    if let Ok(res) = local_executor().exec(block.clone()).await {
-                        if let Some(status) = res.status {
-                            if status.code == 0 {
-                                let batch_number = BlockContext::get_batch_number(con).await?;
 
-                                for raw_tx in tx_list {
-                                    CacheOperator::try_clean_contract(con, raw_tx)?;
-                                }
+                            let packaged_tx_obj = Package::new(batch_number, block.clone())
+                                .to_packaged_tx(*account.address())?;
+                            let raw_tx = packaged_tx_obj.to(con).await?;
+                            let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
+                            let hash_str = hex_without_0x(hash.as_slice());
+                            Self::tag_tx(con, hash_str.clone())?;
 
-                                let packaged_tx_obj = Package::new(batch_number, block.clone())
-                                    .to_packaged_tx(*account.address())?;
-                                let raw_tx = packaged_tx_obj.to(con).await?;
-                                let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
-                                let hash_str = hex_without_0x(hash.as_slice());
-                                Self::tag_tx(con, hash_str.clone())?;
-
-                                let header = block.header.expect("get block header failed");
-                                let mut block_header_bytes =
-                                    Vec::with_capacity(header.encoded_len());
-                                header
-                                    .encode(&mut block_header_bytes)
-                                    .expect("encode block header failed");
-                                let block_hash = account.hash(block_header_bytes.as_slice());
-                                BlockContext::step_next(con, block_hash)?;
-                                set(con, stream_id_key(ENQUEUE.to_string()), last.id)?;
-                                warn!(
-                                    "package batch: {}, txs_num: {}, hash: {}",
-                                    batch_number, size, hash_str
-                                );
-                            }
+                            let header = block.header.expect("get block header failed");
+                            let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
+                            header
+                                .encode(&mut block_header_bytes)
+                                .expect("encode block header failed");
+                            let block_hash = account.hash(block_header_bytes.as_slice());
+                            BlockContext::step_next(con, block_hash)?;
+                            set(con, stream_id_key(ENQUEUE.to_string()), last.id)?;
+                            warn!(
+                                "package batch: {}, txs_num: {}, hash: {}",
+                                batch_number, size, hash_str
+                            );
                         }
                     }
                 }
-                EXPIRE => {
-                    for id in item.ids {
-                        let map = id.map;
-                        let (key, expire_time) = match map.get("data") {
-                            Some(RedisValue::Data(data)) => {
-                                let expire = deserialize::<Expire>(data.as_slice())?;
-                                (expire.key, expire.expire_time)
-                            }
-                            _ => continue,
-                        };
+            }
+        }
+        Ok(())
+    }
 
-                        Self::expire(con, key, expire_time as usize)?;
-                        set(con, stream_id_key(EXPIRE.to_string()), id.id)?;
-                    }
+    async fn sub_expire_stream(
+        con: &mut Connection,
+        time_internal: u64,
+        timing_batch: usize,
+    ) -> Result<()> {
+        let expire_id =
+            get::<String>(con, stream_id_key(EXPIRE.to_string())).unwrap_or("0".to_string());
+        let opts = if time_internal == 0 {
+            StreamReadOptions::default().count(timing_batch)
+        } else {
+            StreamReadOptions::default()
+                .block(time_internal as usize)
+                .count(timing_batch)
+        };
+        let results: StreamReadReply =
+            con.xread_options(&[stream_key(EXPIRE.to_string())], &[expire_id], opts)?;
+        if results.keys.is_empty() {
+            return Ok(());
+        }
+        for item in results.keys {
+            if stream_key_suffix(item.key).as_str() == EXPIRE {
+                for id in item.ids {
+                    let map = id.map;
+                    let (key, expire_time) = match map.get("data") {
+                        Some(RedisValue::Data(data)) => {
+                            let expire = deserialize::<Expire>(data.as_slice())?;
+                            (expire.key, expire.expire_time)
+                        }
+                        _ => continue,
+                    };
+                    CacheOperator::update_expire(con, key.clone(), expire_time as usize)?;
+                    set(con, stream_id_key(EXPIRE.to_string()), id.id)?;
                 }
-                _ => {}
             }
         }
         Ok(())
@@ -873,17 +899,6 @@ impl PackBehavior for Master {
 }
 
 impl Master {
-    pub fn enqueue(
-        con: &mut Connection,
-        hash_str: String,
-        tx: Vec<u8>,
-        valid_util_block: u64,
-    ) -> Result<()> {
-        CacheOperator::save_valid_until_block(con, hash_str.clone(), valid_util_block)?;
-        CacheOperator::enqueue_tx(con, hash_str, tx)?;
-        Ok(())
-    }
-
     pub fn save_tx_content(
         con: &mut Connection,
         tx_hash: String,
@@ -912,12 +927,6 @@ impl Master {
     ) -> Result<()> {
         Self::save_tx_content(con, hash.clone(), err.clone(), expire_time)?;
         Self::save_receipt_content(con, hash, err, expire_time)
-    }
-
-    pub fn expire(con: &mut Connection, key: String, seconds: usize) -> Result<u64> {
-        CacheOperator::update_expire(con, key.clone(), seconds)?;
-        let result = crate::redis::expire(con, key, seconds)?;
-        Ok(result)
     }
 }
 

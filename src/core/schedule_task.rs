@@ -198,22 +198,47 @@ impl Expire {
         Self { key, expire_time }
     }
 }
-pub struct XaddTask;
+pub struct SubEnqueueTask;
 
 #[tonic::async_trait]
-impl ScheduleTask for XaddTask {
+impl ScheduleTask for SubEnqueueTask {
     async fn task(_con: &mut Connection, _: isize, _: usize) -> Result<()> {
         Ok(())
     }
 
     fn name() -> String {
-        "xadd key".to_string()
+        "sub enqueue task".to_string()
     }
 
     async fn schedule(time_internal: u64, timing_batch: isize, _expire_time: usize) {
         let con = &mut get_con();
         loop {
-            if let Err(e) = Master::sub_xadd_stream(con, time_internal, timing_batch as usize).await
+            if let Err(e) =
+                Master::sub_enqueue_stream(con, time_internal, timing_batch as usize).await
+            {
+                warn!("[{} task] enable error: {}", Self::name(), e);
+            }
+        }
+    }
+}
+
+pub struct SubExpireTask;
+
+#[tonic::async_trait]
+impl ScheduleTask for SubExpireTask {
+    async fn task(_con: &mut Connection, _: isize, _: usize) -> Result<()> {
+        Ok(())
+    }
+
+    fn name() -> String {
+        "sub expire task".to_string()
+    }
+
+    async fn schedule(time_internal: u64, timing_batch: isize, _expire_time: usize) {
+        let con = &mut get_con();
+        loop {
+            if let Err(e) =
+                Master::sub_expire_stream(con, time_internal, timing_batch as usize).await
             {
                 warn!("[{} task] enable error: {}", Self::name(), e);
             }
@@ -254,6 +279,11 @@ impl ScheduleTaskManager {
                 timing_batch,
                 expire_time,
             ));
+            runtime.spawn(SubExpireTask::schedule(
+                config.stream_block_ms.unwrap(),
+                config.stream_max_count.unwrap() as isize,
+                expire_time,
+            ));
         }
         if config.is_master {
             runtime.spawn(CommitTxTask::schedule(
@@ -266,7 +296,7 @@ impl ScheduleTaskManager {
                 timing_batch,
                 expire_time,
             ));
-            runtime.spawn(XaddTask::schedule(
+            runtime.spawn(SubEnqueueTask::schedule(
                 config.stream_block_ms.unwrap(),
                 config.stream_max_count.unwrap() as isize,
                 expire_time,

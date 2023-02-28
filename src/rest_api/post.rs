@@ -295,7 +295,7 @@ async fn create_contract(con: &mut Connection, create_contract: CreateContract) 
     let tx = create_contract.to(con).await?;
     let flag = create_contract.local_execute.unwrap_or_default();
     if flag {
-        Master::enqueue_raw_tx_async(con, account, tx).await
+        Master::enqueue_local_raw_tx(con, account, tx).await
     } else {
         Master::enqueue_raw_tx(con, account, tx).await
     }
@@ -344,7 +344,7 @@ async fn create_tx(con: &mut Connection, send_tx: SendTx) -> Result<Hash> {
     let tx = send_tx.to(con).await?;
     let flag = send_tx.local_execute.unwrap_or_default();
     if flag {
-        Master::enqueue_raw_tx_async(con, account, tx).await
+        Master::enqueue_local_raw_tx(con, account, tx).await
     } else {
         Master::enqueue_raw_tx(con, account, tx).await
     }
