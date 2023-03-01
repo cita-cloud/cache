@@ -202,23 +202,12 @@ pub struct SubEnqueueTask;
 
 #[tonic::async_trait]
 impl ScheduleTask for SubEnqueueTask {
-    async fn task(_con: &mut Connection, _: isize, _: usize) -> Result<()> {
-        Ok(())
+    async fn task(con: &mut Connection, timing_batch: isize, _: usize) -> Result<()> {
+        Master::sub_enqueue_stream(con, timing_batch as usize).await
     }
 
     fn name() -> String {
         "sub enqueue task".to_string()
-    }
-
-    async fn schedule(time_internal: u64, timing_batch: isize, _expire_time: usize) {
-        let con = &mut get_con();
-        loop {
-            if let Err(e) =
-                Master::sub_enqueue_stream(con, time_internal, timing_batch as usize).await
-            {
-                warn!("[{} task] enable error: {}", Self::name(), e);
-            }
-        }
     }
 }
 

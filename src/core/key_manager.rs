@@ -579,11 +579,7 @@ pub trait MasterBehavior {
 
     async fn check(con: &mut Connection, timing_batch: isize, expire_time: usize) -> Result<()>;
 
-    async fn sub_enqueue_stream(
-        con: &mut Connection,
-        time_internal: u64,
-        timing_batch: usize,
-    ) -> Result<()>;
+    async fn sub_enqueue_stream(con: &mut Connection, timing_batch: usize) -> Result<()>;
 
     async fn sub_expire_stream(
         con: &mut Connection,
@@ -768,20 +764,10 @@ impl MasterBehavior for Master {
         Ok(())
     }
 
-    async fn sub_enqueue_stream(
-        con: &mut Connection,
-        time_internal: u64,
-        timing_batch: usize,
-    ) -> Result<()> {
+    async fn sub_enqueue_stream(con: &mut Connection, timing_batch: usize) -> Result<()> {
         let enqueue_id =
             get::<String>(con, stream_id_key(ENQUEUE.to_string())).unwrap_or("0".to_string());
-        let opts = if time_internal == 0 {
-            StreamReadOptions::default().count(timing_batch)
-        } else {
-            StreamReadOptions::default()
-                .block(time_internal as usize)
-                .count(timing_batch)
-        };
+        let opts = StreamReadOptions::default().count(timing_batch);
         let results: StreamReadReply =
             con.xread_options(&[stream_key(ENQUEUE.to_string())], &[enqueue_id], opts)?;
         if results.keys.is_empty() {
