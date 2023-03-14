@@ -809,6 +809,7 @@ impl MasterBehavior for Master {
                             let packaged_tx_obj = Package::new(batch_number, block.clone())
                                 .to_packaged_tx(*account.address())?;
                             let raw_tx = packaged_tx_obj.to(con).await?;
+                            warn!("raw_tx len: {}", raw_tx.encoded_len());
                             let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
                             let hash_str = hex_without_0x(hash.as_slice());
                             Self::tag_tx(con, hash_str.clone())?;
