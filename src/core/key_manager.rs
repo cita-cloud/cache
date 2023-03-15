@@ -603,7 +603,7 @@ impl MasterBehavior for Master {
     {
         let valid_until_block = raw_tx.valid_until_block;
         let mut buf = vec![];
-        let raw = signer.sign_raw_tx(raw_tx).await;
+        let raw = signer.sign_raw_tx(raw_tx, true).await;
 
         let empty = Vec::new();
         let hash = match raw.tx {
@@ -626,7 +626,7 @@ impl MasterBehavior for Master {
     where
         S: SignerBehaviour + Send + Sync,
     {
-        let raw = signer.sign_raw_tx(raw_tx).await;
+        let raw = signer.sign_raw_tx(raw_tx, false).await;
         let mut buf = Vec::with_capacity(raw.encoded_len());
         raw.encode(&mut buf)?;
         let empty = Vec::new();
@@ -661,6 +661,7 @@ impl MasterBehavior for Master {
                     info!("commit tx success, hash: {}", hash_str);
                 }
                 Err(e) => {
+                    warn!("commit tx failed, hash: {}, e: {}", tx_hash, e);
                     if Self::is_packaged_tx(con, tx_hash.clone())? {
                         let tx = CacheOperator::original_tx(con, tx_hash.clone())?;
                         let decoded: RawTransaction = Message::decode(tx.as_slice())?;

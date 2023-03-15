@@ -156,7 +156,7 @@ impl ToTx for CreateContract {
         let system_config = BlockContext::system_config(con)?;
         let version = system_config.version;
         let chain_id = system_config.chain_id;
-        let nonce = rand::random::<u64>().to_string();
+        let nonce = "".to_string();
         Ok(CloudNormalTransaction {
             version,
             to,

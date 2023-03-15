@@ -201,7 +201,7 @@ pub trait SignerBehaviour {
     fn address(&self) -> &[u8];
     fn sign(&self, msg: &[u8]) -> Vec<u8>;
 
-    async fn sign_raw_tx(&self, tx: CloudNormalTransaction) -> RawTransaction {
+    async fn sign_raw_tx(&self, tx: CloudNormalTransaction, sign: bool) -> RawTransaction {
         // calc tx hash
         let tx_hash = {
             // build tx bytes
@@ -214,7 +214,11 @@ pub trait SignerBehaviour {
         };
         // sign tx hash
         let sender = self.address().to_vec();
-        let signature = self.sign(tx_hash.as_slice()).to_vec();
+        let signature = if sign {
+            self.sign(tx_hash.as_slice()).to_vec()
+        } else {
+            Vec::new()
+        };
 
         // build raw tx
         let raw_tx = {
