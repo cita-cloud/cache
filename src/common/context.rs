@@ -17,15 +17,16 @@ use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
 use crate::common::constant::{local_executor, ADMIN_ACCOUNT};
 use crate::common::util::{hex, parse_data, timestamp};
-use crate::core::key_manager::ValBehavior;
 use crate::core::key_manager::{
     admin_account_key, cita_cloud_block_number_key, key_without_param, rollup_write_enable,
     system_config_key, CacheOperator,
 };
+use crate::core::key_manager::{batch_to_state_root, ValBehavior};
 use crate::core::key_manager::{current_batch_number, current_fake_block_hash};
 use crate::redis::{set, Connection};
-use crate::{config, exists, get, incr_one, layer1, CryptoType, Layer1Adaptor, KEY_PAIR};
+use crate::{config, exists, get, hset, incr_one, layer1, CryptoType, Layer1Adaptor, KEY_PAIR};
 use anyhow::{anyhow, Result};
+use cita_cloud_proto::common::HashResponse;
 use cita_cloud_proto::{
     blockchain::{Block, BlockHeader, RawTransaction, RawTransactions},
     controller::SystemConfig,
@@ -110,9 +111,23 @@ impl BlockContext {
         Ok(set(con, current_fake_block_hash(), hash)?)
     }
 
-    pub fn step_next(con: &mut Connection, block_hash: Vec<u8>) -> Result<()> {
-        Self::increase_batch_number(con)?;
+    pub fn save_state_root(
+        con: &mut Connection,
+        batch_number: u64,
+        state_root: Vec<u8>,
+    ) -> Result<u64> {
+        Ok(hset(
+            con,
+            batch_to_state_root(),
+            format!("{}", batch_number),
+            state_root,
+        )?)
+    }
+
+    pub fn step_next(con: &mut Connection, block_hash: Vec<u8>, state_root: Vec<u8>) -> Result<()> {
+        let batch_number = Self::increase_batch_number(con)?;
         Self::set_fake_block_hash(con, block_hash)?;
+        Self::save_state_root(con, batch_number, state_root)?;
         Ok(())
     }
 
@@ -218,7 +233,11 @@ impl LocalBehaviour for BlockContext {
         let account = maybe.unlocked()?;
         let block = Self::genesis_block();
         let res = local_executor().exec(block.clone()).await?;
-        if let Some(status) = res.status {
+        if let HashResponse {
+            status: Some(status),
+            hash: Some(state_root),
+        } = res
+        {
             if status.code == 0 {
                 let genesis_header = block.header.expect("get genesis header failed!");
                 let mut block_header_bytes = Vec::with_capacity(genesis_header.encoded_len());
@@ -227,7 +246,7 @@ impl LocalBehaviour for BlockContext {
                     .expect("encode block header failed");
                 let block_hash = account.hash(block_header_bytes.as_slice());
                 info!("current block hash: {}", hex(block_hash.as_slice()));
-                Self::step_next(con, block_hash)?;
+                Self::step_next(con, block_hash, state_root.hash)?;
                 Ok(())
             } else {
                 Err(anyhow!(

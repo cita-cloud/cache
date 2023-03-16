@@ -35,6 +35,7 @@ pub const CITA_CLOUD_BLOCK_NUMBER: &str = "cita_cloud_block_number";
 pub const CURRENT_BATCH_NUMBER: &str = "current_batch_number";
 pub const VALIDATOR_BATCH_NUMBER: &str = "validator_batch_number";
 pub const CURRENT_FAKE_BLOCK_HASH: &str = "current_fake_block_hash";
+pub const BATCH_NUMBER_TO_STATE_ROOT: &str = "batch_number_to_state_root";
 pub const PACKAGED_TX: &str = "packaged_tx";
 pub const STREAM_ID: &str = "stream_id";
 pub const ENQUEUE: &str = "enqueue";

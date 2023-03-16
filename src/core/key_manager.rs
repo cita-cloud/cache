@@ -38,6 +38,7 @@ use crate::core::schedule_task::get_con;
 use crate::core::schedule_task::Expire;
 use crate::interface::Layer1Adaptor;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
+use cita_cloud_proto::common::HashResponse;
 use r2d2_redis::redis::streams::{StreamReadOptions, StreamReadReply};
 use std::future::Future;
 
@@ -99,6 +100,10 @@ pub fn validator_batch_number() -> String {
 
 pub fn current_fake_block_hash() -> String {
     format!("{KEY_PREFIX}:{VAL_TYPE}:{CURRENT_FAKE_BLOCK_HASH}")
+}
+
+pub fn batch_to_state_root() -> String {
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{BATCH_NUMBER_TO_STATE_ROOT}")
 }
 
 pub fn rollup_write_enable() -> String {
@@ -798,36 +803,38 @@ impl MasterBehavior for Master {
                 let block =
                     BlockContext::fake_block(con, proposer.clone(), tx_list.clone()).await?;
                 let size = tx_list.len();
-                if let Ok(res) = local_executor().exec(block.clone()).await {
-                    if let Some(status) = res.status {
-                        if status.code == 0 {
-                            let batch_number = BlockContext::get_batch_number(con).await?;
+                if let Ok(HashResponse {
+                    status: Some(status),
+                    hash: Some(state_root),
+                }) = local_executor().exec(block.clone()).await
+                {
+                    if status.code == 0 {
+                        let batch_number = BlockContext::get_batch_number(con).await?;
 
-                            for raw_tx in tx_list {
-                                CacheOperator::try_clean_contract(con, raw_tx)?;
-                            }
-
-                            let packaged_tx_obj = Package::new(batch_number, block.clone())
-                                .to_packaged_tx(*account.address())?;
-                            let raw_tx = packaged_tx_obj.to(con).await?;
-                            warn!("raw_tx len: {}", raw_tx.encoded_len());
-                            let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
-                            let hash_str = hex_without_0x(hash.as_slice());
-                            Self::tag_tx(con, hash_str.clone())?;
-
-                            let header = block.header.expect("get block header failed");
-                            let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
-                            header
-                                .encode(&mut block_header_bytes)
-                                .expect("encode block header failed");
-                            let block_hash = account.hash(block_header_bytes.as_slice());
-                            BlockContext::step_next(con, block_hash)?;
-                            set(con, stream_id_key(ENQUEUE.to_string()), last.id)?;
-                            warn!(
-                                "package batch: {}, txs_num: {}, hash: {}",
-                                batch_number, size, hash_str
-                            );
+                        for raw_tx in tx_list {
+                            CacheOperator::try_clean_contract(con, raw_tx)?;
                         }
+
+                        let packaged_tx_obj = Package::new(batch_number, block.clone())
+                            .to_packaged_tx(*account.address())?;
+                        let raw_tx = packaged_tx_obj.to(con).await?;
+                        warn!("raw_tx len: {}", raw_tx.encoded_len());
+                        let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
+                        let hash_str = hex_without_0x(hash.as_slice());
+                        Self::tag_tx(con, hash_str.clone())?;
+
+                        let header = block.header.expect("get block header failed");
+                        let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
+                        header
+                            .encode(&mut block_header_bytes)
+                            .expect("encode block header failed");
+                        let block_hash = account.hash(block_header_bytes.as_slice());
+                        BlockContext::step_next(con, block_hash, state_root.hash)?;
+                        set(con, stream_id_key(ENQUEUE.to_string()), last.id)?;
+                        warn!(
+                            "package batch: {}, txs_num: {}, hash: {}",
+                            batch_number, size, hash_str
+                        );
                     }
                 }
             }
@@ -1052,7 +1059,11 @@ impl ValidatorBehavior for Validator {
                     {
                         warn!("replay exec block cost {} ms!", timestamp() - first);
 
-                        if let Some(status) = res.status {
+                        if let HashResponse {
+                            status: Some(status),
+                            hash: Some(state_root),
+                        } = res
+                        {
                             if status.code == 0 {
                                 for raw_tx in block.body.expect("get block body failed").body {
                                     CacheOperator::try_clean_contract(con, raw_tx)?;
@@ -1063,7 +1074,7 @@ impl ValidatorBehavior for Validator {
                                     .encode(&mut block_header_bytes)
                                     .expect("encode block header failed");
                                 let block_hash = account.hash(block_header_bytes.as_slice());
-                                BlockContext::step_next(con, block_hash)?;
+                                BlockContext::step_next(con, block_hash, state_root.hash)?;
                                 Self::clean(con, member)?;
                             }
                         }
