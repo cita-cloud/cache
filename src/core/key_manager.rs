@@ -1031,7 +1031,7 @@ impl ValidatorBehavior for Validator {
                     let raw = CacheOperator::original_tx(con, member.clone())?;
                     let decoded_package = deserialize::<Package>(raw.as_slice())?;
 
-                    let block: Block = Message::decode(decoded_package.block.as_slice())?;
+                    let block: Block = Message::decode(decoded_package.block().as_slice())?;
 
                     let mut header = block.header.expect("get block header failed");
                     let body = block.body.clone().expect("get block body failed").clone();

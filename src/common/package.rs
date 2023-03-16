@@ -20,6 +20,7 @@ use anyhow::Result;
 use cita_cloud_proto::blockchain::Block;
 use msgpack_schema::{serialize, Deserialize, Serialize};
 use prost::Message;
+use snap::raw::{Decoder, Encoder};
 
 #[derive(Default, Debug, Deserialize, Serialize, Clone)]
 pub struct Package {
@@ -35,8 +36,26 @@ impl Package {
         block.encode(&mut block_bytes).expect("encode block failed");
         Self {
             batch_number,
-            block: block_bytes,
+            block: Self::compress(block_bytes),
         }
+    }
+
+    fn compress(data: Vec<u8>) -> Vec<u8> {
+        let mut encoder = Encoder::new();
+        let mut compressed_data = Vec::new();
+        encoder
+            .compress(data.as_slice(), &mut compressed_data)
+            .expect("compress block failed");
+        compressed_data
+    }
+
+    pub fn block(&self) -> Vec<u8> {
+        let mut decoder = Decoder::new();
+        let mut output_data = Vec::new();
+        decoder
+            .decompress(self.block.as_slice(), &mut output_data)
+            .expect("decompress block failed");
+        output_data
     }
 
     pub fn to_packaged_tx(&self, from: Address) -> Result<PackageTx> {
