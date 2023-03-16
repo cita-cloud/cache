@@ -1,3 +1,4 @@
+use std::io::Write;
 // Copyright Rivtower Technologies LLC.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +21,6 @@ use anyhow::Result;
 use cita_cloud_proto::blockchain::Block;
 use msgpack_schema::{serialize, Deserialize, Serialize};
 use prost::Message;
-use snap::raw::{Decoder, Encoder};
 
 #[derive(Default, Debug, Deserialize, Serialize, Clone)]
 pub struct Package {
@@ -40,22 +40,28 @@ impl Package {
         }
     }
 
-    fn compress(data: Vec<u8>) -> Vec<u8> {
-        let mut encoder = Encoder::new();
-        let mut compressed_data = Vec::new();
-        encoder
-            .compress(data.as_slice(), &mut compressed_data)
+    fn compress(bytes: Vec<u8>) -> Vec<u8> {
+        use snap::write;
+
+        let mut wtr = write::FrameEncoder::new(vec![]);
+        wtr.write_all(bytes.as_slice())
             .expect("compress block failed");
-        compressed_data
+        wtr.into_inner().expect("get compress failed")
+    }
+
+    fn decompress(bytes: Vec<u8>) -> Vec<u8> {
+        use snap::read;
+        use std::io::Read;
+
+        let mut buf = vec![];
+        read::FrameDecoder::new(bytes.as_slice())
+            .read_to_end(&mut buf)
+            .expect("decompress block failed");
+        buf
     }
 
     pub fn block(&self) -> Vec<u8> {
-        let mut decoder = Decoder::new();
-        let mut output_data = Vec::new();
-        decoder
-            .decompress(self.block.as_slice(), &mut output_data)
-            .expect("decompress block failed");
-        output_data
+        Self::decompress(self.block.clone())
     }
 
     pub fn to_packaged_tx(&self, from: Address) -> Result<PackageTx> {
