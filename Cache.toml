@@ -16,6 +16,11 @@ rough_internal = 10
 crypto_type = "SM"
 is_master = true
 
+[default.log_config]
+agent_endpoint = "jaeger.tracing.svc:6831"
+filter = "info"
+max_level = "info"
+service_name = "cache"
 ## set only when compiled in debug mode, i.e, `cargo build`
 [debug]
 port = 8000
@@ -89,7 +94,12 @@ log_level = "normal"
 expire_time = 60
 layer1_type = 0
 enable_evict = false
-
+[test.log_config]
+agent_endpoint = "127.0.0.1:6831"
+filter = "info"
+max_level = "info"
+#rolling_file_path = "./logs"
+service_name = "cache"
 
 ## set only when compiled in release mode, i.e, `cargo build --release`
 ## don't use this secret_key! generate your own and keep it private!

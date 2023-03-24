@@ -39,8 +39,10 @@ use crate::core::schedule_task::Expire;
 use crate::interface::Layer1Adaptor;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
 use cita_cloud_proto::common::HashResponse;
+use opentelemetry::global;
 use r2d2_redis::redis::streams::{StreamReadOptions, StreamReadReply};
 use std::future::Future;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 fn uncommitted_tx_key() -> String {
     format!("{KEY_PREFIX}:{ZSET_TYPE}:{UNCOMMITTED_TX}")
@@ -62,6 +64,10 @@ pub fn hash_to_tx() -> String {
     format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_TX}")
 }
 
+pub fn hash_to_trace_ctx() -> String {
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_TRACE_CTX}")
+}
+
 fn hash_to_block_number() -> String {
     format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_BLOCK_NUMBER}")
 }
@@ -76,6 +82,10 @@ fn clean_up_prefix() -> String {
 
 fn packaged_tx() -> String {
     format!("{KEY_PREFIX}:{SET_TYPE}:{PACKAGED_TX}:")
+}
+
+fn block_to_tx(block_hash: String) -> String {
+    format!("{KEY_PREFIX}:{SET_TYPE}:{BLOCK_TO_TX}:{block_hash}")
 }
 
 fn lazy_evict_to_time() -> String {
@@ -397,6 +407,22 @@ impl ExpiredBehavior for CacheOperator {
         Ok(())
     }
 }
+use crate::common::cache_log::CtxMap;
+use tracing::info;
+use tracing::instrument;
+
+#[instrument(skip_all)]
+fn on_local_execute(ctx: CtxMap) {
+    let parent_cx = global::get_text_map_propagator(|propagator| propagator.extract(&ctx.0));
+    tracing::Span::current().set_parent(parent_cx);
+}
+
+#[instrument(skip_all)]
+fn on_save_to_chain(ctx: CtxMap) {
+    println!("in on_save_to_chain");
+    let parent_cx = global::get_text_map_propagator(|propagator| propagator.extract(&ctx.0));
+    tracing::Span::current().set_parent(parent_cx);
+}
 
 #[tonic::async_trait]
 impl ContractBehavior for CacheOperator {
@@ -429,6 +455,27 @@ pub trait PackBehavior {
 
 #[tonic::async_trait]
 pub trait CacheBehavior {
+    #[instrument(skip_all)]
+    fn save_trace_ctx(con: &mut Connection, hash_str: String, ctx: CtxMap) -> Result<()> {
+        let ctx_bytes = serde_json::to_vec(&ctx)?;
+        hset(con, hash_to_trace_ctx(), hash_str, ctx_bytes)?;
+        Ok(())
+    }
+
+    fn get_trace_ctx(con: &mut Connection, hash_str: String) -> Result<CtxMap> {
+        let ctx_bytes = hget::<Vec<u8>>(con, hash_to_trace_ctx(), hash_str)?;
+        Ok(serde_json::from_slice(&ctx_bytes)?)
+    }
+
+    fn save_block_tx(con: &mut Connection, hash_str: String, tx_hash_str: String) -> Result<()> {
+        sadd(con, block_to_tx(hash_str), tx_hash_str)?;
+        Ok(())
+    }
+
+    fn get_block_txs(con: &mut Connection, hash_str: String) -> Result<Vec<String>> {
+        Ok(smembers(con, block_to_tx(hash_str))?)
+    }
+
     async fn load_or_query_array_like<F, T>(
         con: &mut Connection,
         key: String,
@@ -623,6 +670,7 @@ impl MasterBehavior for Master {
         Ok(Hash::try_from_slice(hash)?)
     }
 
+    #[instrument(skip_all)]
     async fn enqueue_local_raw_tx<S>(
         con: &mut Connection,
         signer: &S,
@@ -731,8 +779,13 @@ impl MasterBehavior for Master {
                         (format!("{e}").as_bytes().to_vec(), expire_time * 5)
                     }
                 };
-
                 Self::save_tx_content(con, tx_hash.clone(), tx, expire_time)?;
+                if Self::is_packaged_tx(con, tx_hash.clone())? {
+                    for tx_hash in CacheOnly::get_block_txs(con, tx_hash.clone())? {
+                        let ctx = CacheOnly::get_trace_ctx(con, tx_hash)?;
+                        on_save_to_chain(ctx);
+                    }
+                }
                 CacheOperator::try_clean_contract_data(con, tx_hash.clone())?;
                 CacheOperator::clean_up_tx(con, tx_hash.clone())?;
 
@@ -811,16 +864,27 @@ impl MasterBehavior for Master {
                     if status.code == 0 {
                         let batch_number = BlockContext::get_batch_number(con).await?;
 
-                        for raw_tx in tx_list {
-                            CacheOperator::try_clean_contract(con, raw_tx)?;
-                        }
-
                         let packaged_tx_obj = Package::new(batch_number, block.clone())
                             .to_packaged_tx(*account.address())?;
                         let raw_tx = packaged_tx_obj.to(con).await?;
                         warn!("raw_tx len: {}", raw_tx.encoded_len());
                         let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
                         let hash_str = hex_without_0x(hash.as_slice());
+                        for raw_tx in tx_list {
+                            if let Some(Tx::NormalTx(normal_tx)) = raw_tx.clone().tx {
+                                let tx_hash_str = hex_without_0x(&normal_tx.transaction_hash);
+                                CacheOnly::save_block_tx(
+                                    con,
+                                    hash_str.clone(),
+                                    tx_hash_str.clone(),
+                                )?;
+                                let ctx = CacheOnly::get_trace_ctx(con, tx_hash_str)?;
+                                on_local_execute(ctx);
+                            }
+
+                            CacheOperator::try_clean_contract(con, raw_tx)?;
+                        }
+                        println!("tag hash: {}", hash_str.clone());
                         Self::tag_tx(con, hash_str.clone())?;
 
                         let header = block.header.expect("get block header failed");

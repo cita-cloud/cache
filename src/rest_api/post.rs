@@ -16,6 +16,7 @@ use std::{u64, usize};
 
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
+use crate::common::cache_log::CtxMap;
 use crate::common::context::BlockContext;
 use crate::common::crypto::Address;
 use crate::common::display::Display;
@@ -32,11 +33,14 @@ use crate::{
 use anyhow::{anyhow, Result};
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
 use cita_cloud_proto::executor::CallRequest;
+use opentelemetry::global;
 use prost::Message;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tracing::instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use utoipa::ToSchema;
 
 #[tonic::async_trait]
@@ -338,16 +342,21 @@ pub async fn create(
     }
 }
 
-async fn create_tx(con: &mut Connection, send_tx: SendTx) -> Result<Hash> {
+#[instrument(skip_all)]
+async fn create_tx(con: &mut Connection, ctx: CtxMap, send_tx: SendTx) -> Result<Hash> {
     let maybe: MaybeLocked = BlockContext::current_account(con)?;
     let account = maybe.unlocked()?;
     let tx = send_tx.to(con).await?;
     let flag = send_tx.local_execute.unwrap_or_default();
-    if flag {
-        Master::enqueue_local_raw_tx(con, account, tx).await
-    } else {
-        Master::enqueue_raw_tx(con, account, tx).await
+    let hash = match flag {
+        true => Master::enqueue_local_raw_tx(con, account, tx).await?,
+        false => Master::enqueue_raw_tx(con, account, tx).await?,
+    };
+    for (k, v) in ctx.0.iter() {
+        println!("k: {}, V: {}", k, v);
     }
+    CacheOnly::save_trace_ctx(con, hex_without_0x(&hash), ctx)?;
+    Ok(hash)
 }
 
 ///Send Transaction
@@ -357,10 +366,20 @@ post,
 path = "/api/sendTx",
 request_body = SendTx,
 )]
-pub async fn send_tx(mut result: Json<SendTx>, pool: &State<Pool>) -> Json<CacheResult<Value>> {
+#[instrument(skip_all)]
+pub async fn send_tx(
+    ctx: CtxMap,
+    mut result: Json<SendTx>,
+    pool: &State<Pool>,
+) -> Json<CacheResult<Value>> {
+    let parent_cx = global::get_text_map_propagator(|prop| prop.extract(&ctx.0));
+    tracing::Span::current().set_parent(parent_cx);
+    for (k, v) in ctx.0.iter() {
+        println!("k: {}, V: {}", k, v);
+    }
     let con = &mut pool.get();
     if let Ok(true) = BlockContext::is_master(con) {
-        match create_tx(con, result.0.with_default()).await {
+        match create_tx(con, ctx, result.0.with_default()).await {
             Ok(data) => Json(success(data.to_json())),
             Err(e) => Json(failure(e)),
         }

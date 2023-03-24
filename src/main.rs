@@ -24,7 +24,6 @@ use crate::cita_cloud::controller::ControllerClient;
 use crate::cita_cloud::crypto::CryptoClient;
 use crate::cita_cloud::evm::EvmClient;
 use crate::cita_cloud::executor::ExecutorClient;
-use crate::common::cache_log::CacheLogger;
 use crate::common::constant::*;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
@@ -33,6 +32,7 @@ use crate::redis::{
     delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, Pool,
 };
+use cloud_util::tracer::LogConfig;
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, receipt, receipt_local,
@@ -56,6 +56,7 @@ use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
 use rocket::figment::{Figment, Profile};
 use serde_json::{json, Value};
+use tracing::{error, info, warn};
 
 #[macro_use]
 extern crate rocket;
@@ -115,6 +116,7 @@ pub struct CacheConfig {
     crypto_type: CryptoType,
     is_master: bool,
     enable_evict: bool,
+    log_config: LogConfig,
 }
 
 impl CacheConfig {
@@ -185,6 +187,7 @@ impl Default for CacheConfig {
             crypto_type: CryptoType::Sm,
             is_master: true,
             enable_evict: false,
+            log_config: LogConfig::default(),
         }
     }
 }
@@ -211,10 +214,10 @@ impl Display for CacheConfig {
             "enable_evict": self.enable_evict,
             "layer1_type": self.layer1_type,
             "expire_time": self.expire_time,
+            "log_config": self.log_config,
         })
     }
 }
-
 #[rocket::main]
 async fn main() {
     init_local_utc_offset();
@@ -232,10 +235,9 @@ async fn main() {
     if let Err(e) = CACHE_CONFIG.set(config.clone()) {
         panic!("store cache config error: {e:?}");
     }
-    if let Err(e) = CacheLogger::set_up() {
-        panic!("set cache logger failed: {e}");
+    if let Err(e) = cloud_util::tracer::init_tracer("cache".to_string(), &config.log_config) {
+        panic!("init tracer error: {e:?}");
     }
-
     info!("cache config: {}", config.display());
     let rpc_clients: RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> =
         RpcClients::new();
