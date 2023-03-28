@@ -433,11 +433,14 @@ request_body = Call,
 )]
 #[instrument(skip_all)]
 pub async fn call(
+    map: CtxMap,
     result: Json<Call>,
     pool: &State<Pool>,
     ctx: &State<RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>>,
     config: &State<CacheConfig>,
 ) -> Json<CacheResult<Value>> {
+    let parent_cx = global::get_text_map_propagator(|prop| prop.extract(&map.0));
+    tracing::Span::current().set_parent(parent_cx);
     let con = &mut pool.get();
     match call_or_load(con, result.0, ctx, config).await {
         Ok(data) => Json(success(data)),
