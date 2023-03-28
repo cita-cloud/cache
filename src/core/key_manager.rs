@@ -34,6 +34,7 @@ use prost::Message;
 use r2d2_redis::redis::{Commands, ControlFlow, FromRedisValue, ToRedisArgs, Value as RedisValue};
 use serde_json::Value;
 
+use crate::common::cache_log::CtxMap;
 use crate::core::schedule_task::get_con;
 use crate::core::schedule_task::Expire;
 use crate::interface::Layer1Adaptor;
@@ -42,6 +43,8 @@ use cita_cloud_proto::common::HashResponse;
 use opentelemetry::global;
 use r2d2_redis::redis::streams::{StreamReadOptions, StreamReadReply};
 use std::future::Future;
+use tracing::instrument;
+use tracing::{info, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 fn uncommitted_tx_key() -> String {
@@ -269,6 +272,7 @@ impl ValBehavior for CacheOperator {
         Ok(result)
     }
 
+    #[instrument(skip_all)]
     fn exist_val(con: &mut Connection, key: String) -> Result<bool> {
         match ttl(con, key) {
             Ok(time) => Ok(time > 0),
@@ -276,6 +280,7 @@ impl ValBehavior for CacheOperator {
         }
     }
 
+    #[instrument(skip_all)]
     fn load_val<T: Clone + Default + FromRedisValue + ToRedisArgs>(
         con: &mut Connection,
         key: String,
@@ -407,9 +412,6 @@ impl ExpiredBehavior for CacheOperator {
         Ok(())
     }
 }
-use crate::common::cache_log::CtxMap;
-use tracing::info;
-use tracing::instrument;
 
 #[instrument(skip_all)]
 fn on_local_execute(ctx: CtxMap) {
@@ -419,7 +421,6 @@ fn on_local_execute(ctx: CtxMap) {
 
 #[instrument(skip_all)]
 fn on_save_to_chain(ctx: CtxMap) {
-    println!("in on_save_to_chain");
     let parent_cx = global::get_text_map_propagator(|propagator| propagator.extract(&ctx.0));
     tracing::Span::current().set_parent(parent_cx);
 }
@@ -476,6 +477,7 @@ pub trait CacheBehavior {
         Ok(smembers(con, block_to_tx(hash_str))?)
     }
 
+    #[instrument(skip_all)]
     async fn load_or_query_array_like<F, T>(
         con: &mut Connection,
         key: String,
@@ -497,6 +499,7 @@ pub trait CacheBehavior {
         }
     }
 
+    #[instrument(skip_all)]
     async fn load_or_query_proto<F, T>(
         con: &mut Connection,
         key: String,
@@ -884,7 +887,6 @@ impl MasterBehavior for Master {
 
                             CacheOperator::try_clean_contract(con, raw_tx)?;
                         }
-                        println!("tag hash: {}", hash_str.clone());
                         Self::tag_tx(con, hash_str.clone())?;
 
                         let header = block.header.expect("get block header failed");

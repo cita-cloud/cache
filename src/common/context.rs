@@ -34,6 +34,7 @@ use cita_cloud_proto::{
 use cloud_util::unix_now;
 use prost::Message;
 use std::cmp;
+use tracing::{info, instrument, warn};
 
 #[tonic::async_trait]
 pub trait LocalBehaviour {
@@ -70,6 +71,7 @@ impl BlockContext {
         set(con, account_key, account_str.to_string())?;
         Ok(())
     }
+
     pub fn current_cita_height(con: &mut Connection) -> Result<u64> {
         let current = get::<u64>(con, cita_cloud_block_number_key())?;
         Ok(current)
@@ -145,6 +147,7 @@ impl BlockContext {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn is_master(con: &mut Connection) -> Result<bool> {
         let key = rollup_write_enable();
         Ok(exists(con, key.clone())? && get::<u64>(con, key)? == 1)

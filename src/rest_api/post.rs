@@ -293,16 +293,23 @@ impl Default for Call {
     }
 }
 
-async fn create_contract(con: &mut Connection, create_contract: CreateContract) -> Result<Hash> {
+#[instrument(skip_all)]
+async fn create_contract(
+    con: &mut Connection,
+    ctx: CtxMap,
+    create_contract: CreateContract,
+) -> Result<Hash> {
     let maybe: MaybeLocked = BlockContext::current_account(con)?;
     let account = maybe.unlocked()?;
     let tx = create_contract.to(con).await?;
     let flag = create_contract.local_execute.unwrap_or_default();
-    if flag {
-        Master::enqueue_local_raw_tx(con, account, tx).await
+    let hash = if flag {
+        Master::enqueue_local_raw_tx(con, account, tx).await?
     } else {
-        Master::enqueue_raw_tx(con, account, tx).await
-    }
+        Master::enqueue_raw_tx(con, account, tx).await?
+    };
+    CacheOnly::save_trace_ctx(con, hex_without_0x(&hash), ctx)?;
+    Ok(hash)
 }
 
 ///Change role online
@@ -327,13 +334,17 @@ post,
 path = "/api/create",
 request_body = CreateContract,
 )]
+#[instrument(skip_all)]
 pub async fn create(
+    ctx: CtxMap,
     mut result: Json<CreateContract>,
     pool: &State<Pool>,
 ) -> Json<CacheResult<Value>> {
+    let parent_cx = global::get_text_map_propagator(|prop| prop.extract(&ctx.0));
+    tracing::Span::current().set_parent(parent_cx);
     let con = &mut pool.get();
     if let Ok(true) = BlockContext::is_master(con) {
-        match create_contract(con, result.0.with_default()).await {
+        match create_contract(con, ctx, result.0.with_default()).await {
             Ok(data) => Json(success(data.to_json())),
             Err(e) => Json(failure(e)),
         }
@@ -352,9 +363,6 @@ async fn create_tx(con: &mut Connection, ctx: CtxMap, send_tx: SendTx) -> Result
         true => Master::enqueue_local_raw_tx(con, account, tx).await?,
         false => Master::enqueue_raw_tx(con, account, tx).await?,
     };
-    for (k, v) in ctx.0.iter() {
-        println!("k: {}, V: {}", k, v);
-    }
     CacheOnly::save_trace_ctx(con, hex_without_0x(&hash), ctx)?;
     Ok(hash)
 }
@@ -374,9 +382,6 @@ pub async fn send_tx(
 ) -> Json<CacheResult<Value>> {
     let parent_cx = global::get_text_map_propagator(|prop| prop.extract(&ctx.0));
     tracing::Span::current().set_parent(parent_cx);
-    for (k, v) in ctx.0.iter() {
-        println!("k: {}, V: {}", k, v);
-    }
     let con = &mut pool.get();
     if let Ok(true) = BlockContext::is_master(con) {
         match create_tx(con, ctx, result.0.with_default()).await {
@@ -388,6 +393,7 @@ pub async fn send_tx(
     }
 }
 
+#[instrument(skip_all)]
 async fn call_or_load(
     con: &mut Connection,
     result: Call,
@@ -425,6 +431,7 @@ path = "/api/call",
 post,
 request_body = Call,
 )]
+#[instrument(skip_all)]
 pub async fn call(
     result: Json<Call>,
     pool: &State<Pool>,
