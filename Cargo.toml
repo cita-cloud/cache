@@ -41,8 +41,8 @@ toml = "0.5"
 tracing = "0.1"
 tracing-opentelemetry = "0.18"
 opentelemetry = { version = "0.18", features = ["rt-tokio"] }
-cloud-util = { package = "cloud-util", git = "https://github.com/cita-cloud/cloud-common-rs.git" }
-cita_cloud_proto = { package = "cita_cloud_proto", git = "https://github.com/cita-cloud/cloud-common-rs.git" }
+cloud-util = '=0.6.2-beta2'
+cita_cloud_proto = '=6.6.5-beta2'
 
 redis = "0.21.5"
 r2d2 = "*"
