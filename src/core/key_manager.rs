@@ -66,6 +66,9 @@ pub fn validate_tx_buffer() -> String {
 pub fn hash_to_tx() -> String {
     format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_TX}")
 }
+pub fn save_block_key() -> String {
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{SAVE_BLOCK}")
+}
 
 pub fn hash_to_trace_ctx() -> String {
     format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_TRACE_CTX}")
@@ -641,6 +644,7 @@ pub trait MasterBehavior {
         time_internal: u64,
         timing_batch: usize,
     ) -> Result<()>;
+    fn save_block(con: &mut Connection, block: Vec<u8>) -> Result<Vec<u8>>;
 }
 
 #[derive(Clone, Copy)]
@@ -727,7 +731,8 @@ impl MasterBehavior for Master {
                             let decoded_package = deserialize::<Package>(package_data.as_slice())?;
                             let maybe: MaybeLocked = BlockContext::current_account(con)?;
                             let account = maybe.unlocked()?;
-                            let new_package = decoded_package.to_packaged_tx(*account.address())?;
+                            let new_package =
+                                decoded_package.to_packaged_tx(con, *account.address())?;
                             let raw_tx = new_package.to(con).await?;
                             let new_hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
                             warn!(
@@ -804,7 +809,8 @@ impl MasterBehavior for Master {
                         let decoded_package = deserialize::<Package>(package_data.as_slice())?;
                         let maybe: MaybeLocked = BlockContext::current_account(con)?;
                         let account = maybe.unlocked()?;
-                        let new_package = decoded_package.to_packaged_tx(*account.address())?;
+                        let new_package =
+                            decoded_package.to_packaged_tx(con, *account.address())?;
                         let raw_tx = new_package.to(con).await?;
                         let new_hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
                         CacheOperator::clean_up_tx(con, tx_hash.clone())?;
@@ -868,7 +874,7 @@ impl MasterBehavior for Master {
                         let batch_number = BlockContext::get_batch_number(con).await?;
 
                         let packaged_tx_obj = Package::new(batch_number, block.clone())
-                            .to_packaged_tx(*account.address())?;
+                            .to_packaged_tx(con, *account.address())?;
                         let raw_tx = packaged_tx_obj.to(con).await?;
                         warn!("raw_tx len: {}", raw_tx.encoded_len());
                         let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
@@ -944,6 +950,16 @@ impl MasterBehavior for Master {
             }
         }
         Ok(())
+    }
+
+    fn save_block(con: &mut Connection, block: Vec<u8>) -> Result<Vec<u8>> {
+        let maybe: MaybeLocked = BlockContext::current_account(con)?;
+        let account = maybe.unlocked()?;
+        let hash = account.hash(block.as_slice());
+        let hash_str = hex_without_0x(hash.as_slice());
+
+        hset(con, save_block_key(), hash_str, block)?;
+        Ok(hash)
     }
 }
 

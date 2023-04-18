@@ -51,6 +51,7 @@ pub const UNCOMMITTED_TX: &str = "uncommitted_tx_hash";
 pub const PACK_UNCOMMITTED_TX: &str = "pack_uncommitted_tx_hash";
 pub const COMMITTED_TX: &str = "committed_tx_hash";
 pub const HASH_TO_TX: &str = "hash_to_tx";
+pub const SAVE_BLOCK: &str = "save_block";
 pub const HASH_TO_BLOCK_NUMBER: &str = "hash_to_block_number";
 pub const TIME_TO_CLEAN_UP: &str = "time_to_clean_up";
 pub const LAZY_EVICT_TO_TIME: &str = "lazy_evict_to_time";
