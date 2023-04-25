@@ -39,7 +39,7 @@ use tracing::instrument;
 params(
 ("flag", description = "The flag"),
 ))]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn version(flag: bool) -> Json<CacheResult<Value>> {
     if flag {
         // let keypair = keypair();
@@ -56,7 +56,7 @@ pub async fn version(flag: bool) -> Json<CacheResult<Value>> {
 ///Get current block number
 #[get("/get-block-number")]
 #[utoipa::path(get, path = "/api/get-block-number")]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn block_number(pool: &State<Pool>) -> Json<CacheResult<Value>> {
     let con = &mut pool.get();
     match BlockContext::current_cita_height(con) {
@@ -74,7 +74,7 @@ params(
 ("address", description = "The contract address"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn abi(
     address: &str,
     config: &State<CacheConfig>,
@@ -111,7 +111,7 @@ params(
 ("address", description = "The account address"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn balance(
     address: &str,
     pool: &State<Pool>,
@@ -147,7 +147,7 @@ params(
 ("hash_or_height", description = "The block hash or height"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn block(
     hash_or_height: &str,
     pool: &State<Pool>,
@@ -195,7 +195,7 @@ params(
 ("address", description = "The contract address"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn code(
     address: &str,
     pool: &State<Pool>,
@@ -231,7 +231,7 @@ params(
 ("hash", description = "The tx hash"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn tx(
     hash: &str,
     pool: &State<Pool>,
@@ -267,7 +267,7 @@ params(
 ("address", description = "The account address"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn account_nonce(
     address: &str,
     pool: &State<Pool>,
@@ -303,7 +303,7 @@ params(
 ("hash", description = "The tx hash"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn receipt(
     hash: &str,
     pool: &State<Pool>,
@@ -339,7 +339,7 @@ params(
 ("hash", description = "The tx hash"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn receipt_local(
     hash: &str,
     pool: &State<Pool>,
@@ -369,7 +369,7 @@ pub async fn receipt_local(
 ///Get system config
 #[get("/get-system-config")]
 #[utoipa::path(get, path = "/api/get-system-config")]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn system_config(pool: &State<Pool>) -> Json<CacheResult<Value>> {
     let con = &mut pool.get();
     match BlockContext::system_config(con) {

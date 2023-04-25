@@ -293,7 +293,7 @@ impl Default for Call {
     }
 }
 
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 async fn create_contract(
     con: &mut Connection,
     ctx: CtxMap,
@@ -334,7 +334,7 @@ post,
 path = "/api/create",
 request_body = CreateContract,
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn create(
     ctx: CtxMap,
     mut result: Json<CreateContract>,
@@ -393,7 +393,7 @@ pub async fn send_tx(
     }
 }
 
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 async fn call_or_load(
     con: &mut Connection,
     result: Call,
@@ -431,7 +431,7 @@ path = "/api/call",
 post,
 request_body = Call,
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn call(
     map: CtxMap,
     result: Json<Call>,

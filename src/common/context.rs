@@ -34,7 +34,7 @@ use cita_cloud_proto::{
 use cloud_util::unix_now;
 use prost::Message;
 use std::cmp;
-use tracing::{info, instrument, warn};
+use tracing::info;
 
 #[tonic::async_trait]
 pub trait LocalBehaviour {
@@ -147,7 +147,7 @@ impl BlockContext {
         }
     }
 
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     pub fn is_master(con: &mut Connection) -> Result<bool> {
         let key = rollup_write_enable();
         Ok(exists(con, key.clone())? && get::<u64>(con, key)? == 1)

@@ -275,7 +275,7 @@ impl ValBehavior for CacheOperator {
         Ok(result)
     }
 
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     fn exist_val(con: &mut Connection, key: String) -> Result<bool> {
         match ttl(con, key) {
             Ok(time) => Ok(time > 0),
@@ -283,7 +283,7 @@ impl ValBehavior for CacheOperator {
         }
     }
 
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     fn load_val<T: Clone + Default + FromRedisValue + ToRedisArgs>(
         con: &mut Connection,
         key: String,
@@ -480,7 +480,7 @@ pub trait CacheBehavior {
         Ok(smembers(con, block_to_tx(hash_str))?)
     }
 
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     async fn load_or_query_array_like<F, T>(
         con: &mut Connection,
         key: String,
@@ -502,7 +502,7 @@ pub trait CacheBehavior {
         }
     }
 
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     async fn load_or_query_proto<F, T>(
         con: &mut Connection,
         key: String,
@@ -677,7 +677,7 @@ impl MasterBehavior for Master {
         Ok(Hash::try_from_slice(hash)?)
     }
 
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     async fn enqueue_local_raw_tx<S>(
         con: &mut Connection,
         signer: &S,
