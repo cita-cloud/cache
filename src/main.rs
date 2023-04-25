@@ -235,7 +235,6 @@ async fn main() {
     if let Err(e) = CACHE_CONFIG.set(config.clone()) {
         panic!("store cache config error: {e:?}");
     }
-    println!("log_config: {:?}", &config.log_config);
     if let Err(e) = cloud_util::tracer::init_tracer("cache".to_string(), &config.log_config) {
         panic!("init tracer error: {e:?}");
     }
