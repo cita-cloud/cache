@@ -320,12 +320,12 @@ impl TxBehavior for CacheOperator {
     }
 
     fn original_tx(con: &mut Connection, tx_hash: String) -> Result<Vec<u8>> {
-        let tx = hget::<Vec<u8>>(con, hash_to_tx(), tx_hash)?;
+        let tx = hget::<String, Vec<u8>>(con, hash_to_tx(), tx_hash)?;
         Ok(tx)
     }
 
     fn valid_until_block(con: &mut Connection, tx_hash: String) -> Result<u64> {
-        let valid_until_block = hget::<u64>(con, hash_to_block_number(), tx_hash)?;
+        let valid_until_block = hget::<String, u64>(con, hash_to_block_number(), tx_hash)?;
         Ok(valid_until_block)
     }
 
@@ -380,7 +380,7 @@ impl ExpiredBehavior for CacheOperator {
     //set_up()会清理掉过期的key，若被清理create_expire
     fn update_expire(con: &mut Connection, key: String, seconds: usize) -> Result<()> {
         if hexists(con, lazy_evict_to_time(), key.clone())? {
-            let old_expire_time = hget(con, lazy_evict_to_time(), key.clone())?;
+            let old_expire_time = hget::<String, u64>(con, lazy_evict_to_time(), key.clone())?;
             let rough_internal = rough_internal();
             let old_rough_time = Self::rough_time(old_expire_time, rough_internal);
 
@@ -467,7 +467,7 @@ pub trait CacheBehavior {
     }
 
     fn get_trace_ctx(con: &mut Connection, hash_str: String) -> Result<CtxMap> {
-        let ctx_bytes = hget::<Vec<u8>>(con, hash_to_trace_ctx(), hash_str)?;
+        let ctx_bytes = hget::<String, Vec<u8>>(con, hash_to_trace_ctx(), hash_str)?;
         Ok(serde_json::from_slice(&ctx_bytes)?)
     }
 
@@ -538,7 +538,7 @@ pub trait CacheBehavior {
 
     fn clean_up_expired_by_key(con: &mut Connection, expired_key: String) -> Result<String> {
         if hexists(con, evict_to_rough_time(), expired_key.clone())? {
-            let key = hget::<String>(con, evict_to_rough_time(), expired_key.clone())?;
+            let key = hget::<String, String>(con, evict_to_rough_time(), expired_key.clone())?;
             Self::clean_up_expired(con, key, expired_key.clone())?;
         }
         Ok(expired_key)
@@ -645,6 +645,7 @@ pub trait MasterBehavior {
         timing_batch: usize,
     ) -> Result<()>;
     fn save_block(con: &mut Connection, block: Vec<u8>) -> Result<Vec<u8>>;
+    fn get_block(con: &mut Connection, hash: Vec<u8>) -> Result<Vec<u8>>;
 }
 
 #[derive(Clone, Copy)]
@@ -956,10 +957,13 @@ impl MasterBehavior for Master {
         let maybe: MaybeLocked = BlockContext::current_account(con)?;
         let account = maybe.unlocked()?;
         let hash = account.hash(block.as_slice());
-        let hash_str = hex_without_0x(hash.as_slice());
 
-        hset(con, save_block_key(), hash_str, block)?;
+        hset(con, save_block_key(), hash.clone(), block)?;
         Ok(hash)
+    }
+
+    fn get_block(con: &mut Connection, hash: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(hget::<Vec<u8>, Vec<u8>>(con, save_block_key(), hash)?)
     }
 }
 
@@ -1093,6 +1097,7 @@ impl ValidatorBehavior for Validator {
             );
             if let Some((hash_str, package_data, batch_number)) = layer1
                 .get_transaction_and_try_decode(
+                    con,
                     Hash::try_from_slice(hash.as_slice())?,
                     account.address().to_vec(),
                 )

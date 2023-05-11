@@ -16,8 +16,11 @@ use crate::cita_cloud::evm::EvmBehaviour;
 use crate::common::crypto::sm::Hash;
 use crate::common::package::Package;
 use crate::common::util::hex_without_0x;
+use crate::core::key_manager::MasterBehavior;
+use crate::redis::Connection;
 use crate::{
-    config, rpc_clients, ControllerClient, CryptoClient, EvmClient, ExecutorClient, RpcClients,
+    config, rpc_clients, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Master,
+    RpcClients,
 };
 use anyhow::Result;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
@@ -38,6 +41,7 @@ pub trait Layer1Adaptor {
 
     async fn get_transaction_and_try_decode(
         &self,
+        con: &mut Connection,
         hash: Hash,
         account: Vec<u8>,
     ) -> Result<Option<(String, Vec<u8>, u64)>>;
@@ -72,6 +76,7 @@ impl Layer1Adaptor for Mock {
 
     async fn get_transaction_and_try_decode(
         &self,
+        _con: &mut Connection,
         _hash: Hash,
         _account: Vec<u8>,
     ) -> Result<Option<(String, Vec<u8>, u64)>> {
@@ -125,6 +130,7 @@ impl Layer1Adaptor for CitaCloud {
 
     async fn get_transaction_and_try_decode(
         &self,
+        con: &mut Connection,
         hash: Hash,
         account: Vec<u8>,
     ) -> Result<Option<(String, Vec<u8>, u64)>> {
@@ -132,7 +138,9 @@ impl Layer1Adaptor for CitaCloud {
         if let Some(Tx::NormalTx(normal_tx)) = raw.tx {
             let sender: Vec<u8> = normal_tx.witness.expect("get witness failed!").sender;
             if sender == account {
-                let package_data = normal_tx.transaction.expect("get transaction failed!").data;
+                let package_data_hash =
+                    normal_tx.transaction.expect("get transaction failed!").data;
+                let package_data = Master::get_block(con, package_data_hash)?;
                 let decoded_package = deserialize::<Package>(package_data.as_slice())?;
                 let batch_number = decoded_package.batch_number;
                 info!("poll batch: {}!", batch_number);
@@ -237,6 +245,7 @@ impl Layer1Adaptor for Layer1 {
 
     async fn get_transaction_and_try_decode(
         &self,
+        con: &mut Connection,
         hash: Hash,
         account: Vec<u8>,
     ) -> Result<Option<(String, Vec<u8>, u64)>> {
@@ -244,12 +253,12 @@ impl Layer1Adaptor for Layer1 {
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
             Layer1Type::CitaCloud => {
                 self.cita_cloud
-                    .get_transaction_and_try_decode(hash, account)
+                    .get_transaction_and_try_decode(con, hash, account)
                     .await
             }
             Layer1Type::Mock => {
                 self.mock
-                    .get_transaction_and_try_decode(hash, account)
+                    .get_transaction_and_try_decode(con, hash, account)
                     .await
             }
         }

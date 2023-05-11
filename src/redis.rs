@@ -116,21 +116,27 @@ pub fn delete<T: Clone + Default + FromRedisValue + ToRedisArgs>(
     con.del(key)
 }
 
-pub fn hset<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+pub fn hset<
+    T: Clone + Default + FromRedisValue + ToRedisArgs,
+    K: Clone + Default + FromRedisValue + ToRedisArgs,
+>(
     con: &mut Connection,
     hkey: String,
-    key: String,
+    key: K,
     val: T,
 ) -> Result<u64, r2d2_redis::redis::RedisError> {
-    con.hset::<String, String, T, u64>(hkey, key, val)
+    con.hset::<String, K, T, u64>(hkey, key, val)
 }
 
-pub fn hget<T: Clone + Default + ToRedisArgs + FromRedisValue>(
+pub fn hget<
+    K: Clone + Default + FromRedisValue + ToRedisArgs,
+    T: Clone + Default + ToRedisArgs + FromRedisValue,
+>(
     con: &mut Connection,
     hkey: String,
-    key: String,
+    key: K,
 ) -> Result<T, r2d2_redis::redis::RedisError> {
-    con.hget(hkey, key)
+    con.hget::<String, K, T>(hkey, key)
 }
 
 #[allow(dead_code)]
