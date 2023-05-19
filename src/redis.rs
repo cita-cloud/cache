@@ -21,6 +21,7 @@ use std::hash::Hash;
 
 pub type Connection = PooledConnection<RedisConnectionManager>;
 
+#[derive(Clone)]
 pub struct Pool {
     pool: r2d2::Pool<RedisConnectionManager>,
 }
@@ -30,6 +31,16 @@ impl Pool {
         let config = config();
         let manager =
             RedisConnectionManager::new(config.redis_addr.unwrap()).expect("connection manager");
+        let pool: r2d2::Pool<RedisConnectionManager> = r2d2::Pool::builder()
+            .max_size(config.redis_max_workers.unwrap() as u32)
+            .build(manager)
+            .expect("db pool");
+        Self { pool }
+    }
+
+    pub fn new_with_uri(uri: String) -> Self {
+        let config = config();
+        let manager = RedisConnectionManager::new(uri).expect("connection manager");
         let pool: r2d2::Pool<RedisConnectionManager> = r2d2::Pool::builder()
             .max_size(config.redis_max_workers.unwrap() as u32)
             .build(manager)
@@ -53,9 +64,12 @@ impl Pool {
     }
 }
 
-pub fn get<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+pub fn get<
+    K: Clone + Default + FromRedisValue + ToRedisArgs,
+    T: Clone + Default + FromRedisValue + ToRedisArgs,
+>(
     con: &mut Connection,
-    key: String,
+    key: K,
 ) -> Result<T, r2d2_redis::redis::RedisError> {
     con.get(key)
 }
@@ -91,12 +105,15 @@ pub fn set_nx<T: Clone + Default + FromRedisValue + ToRedisArgs>(
 }
 
 #[allow(dead_code)]
-pub fn set<T: Clone + Default + FromRedisValue + ToRedisArgs>(
+pub fn set<
+    K: Clone + Default + FromRedisValue + ToRedisArgs,
+    T: Clone + Default + FromRedisValue + ToRedisArgs,
+>(
     con: &mut Connection,
-    key: String,
+    key: K,
     val: T,
 ) -> Result<String, r2d2_redis::redis::RedisError> {
-    con.set::<String, T, String>(key, val)
+    con.set::<K, T, String>(key, val)
 }
 
 pub fn set_ex<T: Clone + Default + FromRedisValue + ToRedisArgs>(

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod adaptor;
 mod cita_cloud;
 mod common;
 mod core;
@@ -46,6 +47,7 @@ use serde::Deserialize;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::adaptor::das_adaptor::{Das, DasAdaptor};
 use crate::cita_cloud::wallet::CryptoType;
 use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
@@ -100,6 +102,7 @@ pub struct CacheConfig {
     local_executor_addr: Option<String>,
     crypto_addr: Option<String>,
     redis_addr: Option<String>,
+    tikv_addr: Option<Vec<String>>,
     timing_internal_sec: Option<u64>,
     timing_batch: Option<isize>,
     redis_max_workers: Option<u64>,
@@ -108,6 +111,7 @@ pub struct CacheConfig {
     packaged_tx_vub: Option<u64>,
     log_level: LogLevel,
     layer1_type: u64,
+    das_type: u64,
     //read cache timeout
     expire_time: Option<usize>,
     //collect expired keys in rough_internal seconds
@@ -139,6 +143,9 @@ impl CacheConfig {
         }
         if self.redis_addr.is_none() {
             self.redis_addr = default.redis_addr;
+        }
+        if self.das_type == 1 && self.tikv_addr.is_none() {
+            self.tikv_addr = default.tikv_addr;
         }
         if self.timing_internal_sec.is_none() {
             self.timing_internal_sec = default.timing_internal_sec;
@@ -173,6 +180,7 @@ impl Default for CacheConfig {
             local_executor_addr: Some("http://127.0.0.1:55556".to_string()),
             crypto_addr: Some("http://127.0.0.1:50005".to_string()),
             redis_addr: Some("redis://default:rivtower@127.0.0.1:6379".to_string()),
+            tikv_addr: Some(vec!["127.0.0.1:12379".to_string()]),
             timing_internal_sec: Some(1),
             timing_batch: Some(100),
             stream_block_ms: Some(100),
@@ -183,6 +191,7 @@ impl Default for CacheConfig {
             expire_time: Some(60),
             rough_internal: Some(10),
             layer1_type: 0,
+            das_type: 0,
             workers: 1,
             crypto_type: CryptoType::Sm,
             is_master: true,
@@ -199,6 +208,7 @@ impl Display for CacheConfig {
             "local_executor_addr": self.local_executor_addr,
             "crypto_addr": self.crypto_addr,
             "redis_addr": self.redis_addr,
+            "tikv_addr": self.tikv_addr,
             "timing_internal_sec": self.timing_internal_sec,
             "timing_batch": self.timing_batch,
             "stream_block_ms": self.stream_block_ms,
@@ -213,6 +223,7 @@ impl Display for CacheConfig {
             "is_master": self.is_master,
             "enable_evict": self.enable_evict,
             "layer1_type": self.layer1_type,
+            "das_type": self.das_type,
             "expire_time": self.expire_time,
             "log_config": self.log_config,
         })
@@ -246,6 +257,10 @@ async fn main() {
         panic!("store rpc clients error: {e}");
     }
     if let Err(e) = LAYER1.set(Layer1::new()) {
+        panic!("layer1 save error: {e}");
+    }
+
+    if let Err(e) = DAS.set(Das::new().await) {
         panic!("layer1 save error: {e}");
     }
     let redis_pool = Pool::new();

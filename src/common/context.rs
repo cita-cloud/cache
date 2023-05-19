@@ -73,18 +73,18 @@ impl BlockContext {
     }
 
     pub fn current_cita_height(con: &mut Connection) -> Result<u64> {
-        let current = get::<u64>(con, cita_cloud_block_number_key())?;
+        let current = get::<String, u64>(con, cita_cloud_block_number_key())?;
         Ok(current)
     }
 
     pub fn system_config(con: &mut Connection) -> Result<SystemConfig> {
-        let system_config = get::<Vec<u8>>(con, system_config_key())?;
+        let system_config = get::<String, Vec<u8>>(con, system_config_key())?;
         let config: SystemConfig = Message::decode(system_config.as_slice())?;
         Ok(config)
     }
 
     pub fn current_account(con: &mut Connection) -> Result<MaybeLocked> {
-        let account_str = get::<String>(con, admin_account_key())?;
+        let account_str = get::<String, String>(con, admin_account_key())?;
         let maybe: MaybeLocked = toml::from_str::<MaybeLocked>(account_str.as_str())?;
         Ok(maybe)
     }
@@ -150,7 +150,7 @@ impl BlockContext {
     // #[instrument(skip_all)]
     pub fn is_master(con: &mut Connection) -> Result<bool> {
         let key = rollup_write_enable();
-        Ok(exists(con, key.clone())? && get::<u64>(con, key)? == 1)
+        Ok(exists(con, key.clone())? && get::<String, u64>(con, key)? == 1)
     }
 
     fn is_restart(con: &mut Connection) -> Result<bool> {
@@ -192,10 +192,10 @@ impl LocalBehaviour for BlockContext {
     async fn get_batch_number(con: &mut Connection) -> Result<u64> {
         let key = current_batch_number();
         if exists(con, key.clone())? {
-            Ok(get::<u64>(con, key.clone())?)
+            Ok(get::<String, u64>(con, key.clone())?)
         } else {
             Self::commit_genesis_block(con).await?;
-            Ok(get::<u64>(con, key.clone())?)
+            Ok(get::<String, u64>(con, key.clone())?)
         }
     }
 

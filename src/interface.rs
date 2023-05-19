@@ -17,7 +17,6 @@ use crate::common::crypto::sm::Hash;
 use crate::common::package::Package;
 use crate::common::util::hex_without_0x;
 use crate::core::key_manager::MasterBehavior;
-use crate::redis::Connection;
 use crate::{
     config, rpc_clients, ControllerClient, CryptoClient, EvmClient, ExecutorClient, Master,
     RpcClients,
@@ -41,7 +40,6 @@ pub trait Layer1Adaptor {
 
     async fn get_transaction_and_try_decode(
         &self,
-        con: &mut Connection,
         hash: Hash,
         account: Vec<u8>,
     ) -> Result<Option<(String, Vec<u8>, u64)>>;
@@ -76,7 +74,6 @@ impl Layer1Adaptor for Mock {
 
     async fn get_transaction_and_try_decode(
         &self,
-        _con: &mut Connection,
         _hash: Hash,
         _account: Vec<u8>,
     ) -> Result<Option<(String, Vec<u8>, u64)>> {
@@ -130,7 +127,6 @@ impl Layer1Adaptor for CitaCloud {
 
     async fn get_transaction_and_try_decode(
         &self,
-        con: &mut Connection,
         hash: Hash,
         account: Vec<u8>,
     ) -> Result<Option<(String, Vec<u8>, u64)>> {
@@ -140,7 +136,7 @@ impl Layer1Adaptor for CitaCloud {
             if sender == account {
                 let package_data_hash =
                     normal_tx.transaction.expect("get transaction failed!").data;
-                let package_data = Master::get_block(con, package_data_hash)?;
+                let package_data = Master::get_block(package_data_hash).await?;
                 let decoded_package = deserialize::<Package>(package_data.as_slice())?;
                 let batch_number = decoded_package.batch_number;
                 info!("poll batch: {}!", batch_number);
@@ -213,16 +209,23 @@ impl TryFrom<u64> for Layer1Type {
 
 #[derive(Clone)]
 pub struct Layer1 {
-    cita_cloud: CitaCloud,
-    mock: Mock,
+    cita_cloud: Option<CitaCloud>,
+    mock: Option<Mock>,
 }
 
 #[tonic::async_trait]
 impl Layer1Adaptor for Layer1 {
     fn new() -> Self {
-        Self {
-            cita_cloud: CitaCloud::new(),
-            mock: Mock::new(),
+        let config = config();
+        match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
+            Layer1Type::CitaCloud => Self {
+                cita_cloud: Some(CitaCloud::new()),
+                mock: None,
+            },
+            Layer1Type::Mock => Self {
+                cita_cloud: None,
+                mock: Some(Mock::new()),
+            },
         }
     }
 
@@ -230,22 +233,39 @@ impl Layer1Adaptor for Layer1 {
         let config = config();
 
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
-            Layer1Type::CitaCloud => self.cita_cloud.send_transaction(transaction).await,
-            Layer1Type::Mock => self.mock.send_transaction(transaction).await,
+            Layer1Type::CitaCloud => {
+                self.cita_cloud
+                    .as_ref()
+                    .unwrap()
+                    .send_transaction(transaction)
+                    .await
+            }
+            Layer1Type::Mock => {
+                self.mock
+                    .as_ref()
+                    .unwrap()
+                    .send_transaction(transaction)
+                    .await
+            }
         }
     }
 
     async fn get_transaction(&self, hash: Hash) -> Result<Vec<u8>> {
         let config = config();
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
-            Layer1Type::CitaCloud => self.cita_cloud.get_transaction(hash).await,
-            Layer1Type::Mock => self.mock.get_transaction(hash).await,
+            Layer1Type::CitaCloud => {
+                self.cita_cloud
+                    .as_ref()
+                    .unwrap()
+                    .get_transaction(hash)
+                    .await
+            }
+            Layer1Type::Mock => self.mock.as_ref().unwrap().get_transaction(hash).await,
         }
     }
 
     async fn get_transaction_and_try_decode(
         &self,
-        con: &mut Connection,
         hash: Hash,
         account: Vec<u8>,
     ) -> Result<Option<(String, Vec<u8>, u64)>> {
@@ -253,12 +273,16 @@ impl Layer1Adaptor for Layer1 {
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
             Layer1Type::CitaCloud => {
                 self.cita_cloud
-                    .get_transaction_and_try_decode(con, hash, account)
+                    .as_ref()
+                    .unwrap()
+                    .get_transaction_and_try_decode(hash, account)
                     .await
             }
             Layer1Type::Mock => {
                 self.mock
-                    .get_transaction_and_try_decode(con, hash, account)
+                    .as_ref()
+                    .unwrap()
+                    .get_transaction_and_try_decode(hash, account)
                     .await
             }
         }
@@ -267,40 +291,64 @@ impl Layer1Adaptor for Layer1 {
     async fn get_receipt(&self, hash: Hash) -> Result<Vec<u8>> {
         let config = config();
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
-            Layer1Type::CitaCloud => self.cita_cloud.get_receipt(hash).await,
-            Layer1Type::Mock => self.mock.get_receipt(hash).await,
+            Layer1Type::CitaCloud => self.cita_cloud.as_ref().unwrap().get_receipt(hash).await,
+            Layer1Type::Mock => self.mock.as_ref().unwrap().get_receipt(hash).await,
         }
     }
 
     async fn estimate_fee(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         let config = config();
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
-            Layer1Type::CitaCloud => self.cita_cloud.estimate_fee(data).await,
-            Layer1Type::Mock => self.mock.estimate_fee(data).await,
+            Layer1Type::CitaCloud => self.cita_cloud.as_ref().unwrap().estimate_fee(data).await,
+            Layer1Type::Mock => self.mock.as_ref().unwrap().estimate_fee(data).await,
         }
     }
 
     async fn get_block_by_number(&self, height: u64) -> Result<Vec<u8>> {
         let config = config();
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
-            Layer1Type::CitaCloud => self.cita_cloud.get_block_by_number(height).await,
-            Layer1Type::Mock => self.mock.get_block_by_number(height).await,
+            Layer1Type::CitaCloud => {
+                self.cita_cloud
+                    .as_ref()
+                    .unwrap()
+                    .get_block_by_number(height)
+                    .await
+            }
+            Layer1Type::Mock => {
+                self.mock
+                    .as_ref()
+                    .unwrap()
+                    .get_block_by_number(height)
+                    .await
+            }
         }
     }
 
     async fn get_block_number(&self, for_pending: bool) -> Result<u64> {
         let config = config();
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
-            Layer1Type::CitaCloud => self.cita_cloud.get_block_number(for_pending).await,
-            Layer1Type::Mock => self.mock.get_block_number(for_pending).await,
+            Layer1Type::CitaCloud => {
+                self.cita_cloud
+                    .as_ref()
+                    .unwrap()
+                    .get_block_number(for_pending)
+                    .await
+            }
+            Layer1Type::Mock => {
+                self.mock
+                    .as_ref()
+                    .unwrap()
+                    .get_block_number(for_pending)
+                    .await
+            }
         }
     }
 
     async fn get_system_config(&self) -> Result<Vec<u8>> {
         let config = config();
         match Layer1Type::try_from(config.layer1_type).expect("layer1 type invalid!") {
-            Layer1Type::CitaCloud => self.cita_cloud.get_system_config().await,
-            Layer1Type::Mock => self.mock.get_system_config().await,
+            Layer1Type::CitaCloud => self.cita_cloud.as_ref().unwrap().get_system_config().await,
+            Layer1Type::Mock => self.mock.as_ref().unwrap().get_system_config().await,
         }
     }
 }

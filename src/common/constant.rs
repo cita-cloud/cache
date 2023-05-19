@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::adaptor::das_adaptor::Das;
 use crate::interface::Layer1;
 use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, RpcClients};
 use efficient_sm2::KeyPair;
@@ -67,6 +68,7 @@ pub static RPC_CLIENTS: OnceCell<
 > = OnceCell::const_new();
 pub static LAYER1: OnceCell<Layer1> = OnceCell::const_new();
 pub static KEY_PAIR: OnceCell<KeyPair> = OnceCell::const_new();
+pub static DAS: OnceCell<Das> = OnceCell::const_new();
 
 pub fn config() -> CacheConfig {
     CACHE_CONFIG.get().unwrap().clone()
@@ -78,6 +80,9 @@ pub fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, 
 
 pub fn layer1() -> Layer1 {
     LAYER1.get().unwrap().clone()
+}
+pub fn das() -> Das {
+    DAS.get().unwrap().clone()
 }
 
 pub fn rough_internal() -> u64 {

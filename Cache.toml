@@ -82,6 +82,7 @@ executor_addr = "http://127.0.0.1:50002"
 local_executor_addr = "http://127.0.0.1:55557"
 crypto_addr = "http://127.0.0.1:50005"
 redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+tikv_addr = ["127.0.0.1:12379"]
 redis_max_workers = 512
 timing_internal_sec = 1
 timing_batch = 10000
@@ -93,6 +94,7 @@ is_master = true
 log_level = "normal"
 expire_time = 60
 layer1_type = 0
+das_type = 0
 enable_evict = false
 [test.log_config]
 agent_endpoint = "127.0.0.1:6831"

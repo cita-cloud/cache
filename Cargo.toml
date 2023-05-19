@@ -51,5 +51,7 @@ thiserror =  "1"
 msgpack-schema = "0.4.2"
 tokio-test = "0.4.2"
 
+tikv-client = "0.1.0"
+
 [build-dependencies]
 tonic-build = "0.8"

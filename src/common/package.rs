@@ -67,11 +67,11 @@ impl Package {
         Self::decompress(self.block.clone())
     }
 
-    pub fn to_packaged_tx(&self, con: &mut Connection, from: Address) -> Result<PackageTx> {
+    pub async fn to_packaged_tx(&self, con: &mut Connection, from: Address) -> Result<PackageTx> {
         Ok(PackageTx {
             from,
             to: parse_addr(STORE_ADDRESS)?,
-            data: Master::save_block(con, serialize(self.clone()))?,
+            data: Master::save_block(con, serialize(self.clone())).await?,
             value: parse_value("0x0")?.to_vec(),
             block_count: block_count(),
         })

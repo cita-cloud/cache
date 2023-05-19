@@ -17,7 +17,7 @@ use crate::common::util::{hex_without_0x, parse_hash, timestamp};
 use crate::redis::{hexists, sadd, set, sismember, smove, ttl, xadd, Connection};
 use crate::{
     delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
-    zrange_withscores, zrem, ArrayLike, Display, Hash, RECEIPT, TX,
+    zrange_withscores, zrem, ArrayLike, DasAdaptor, Display, Hash, RECEIPT, TX,
 };
 use anyhow::Result;
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, Block, CompactBlock, RawTransaction};
@@ -66,8 +66,8 @@ pub fn validate_tx_buffer() -> String {
 pub fn hash_to_tx() -> String {
     format!("{KEY_PREFIX}:{HASH_TYPE}:{HASH_TO_TX}")
 }
-pub fn save_block_key() -> String {
-    format!("{KEY_PREFIX}:{HASH_TYPE}:{SAVE_BLOCK}")
+pub fn save_block_key(hash: String) -> String {
+    format!("{KEY_PREFIX}:{HASH_TYPE}:{SAVE_BLOCK}:{hash}")
 }
 
 pub fn hash_to_trace_ctx() -> String {
@@ -548,7 +548,7 @@ pub trait CacheBehavior {
         let key = current_clean_up_key();
         if exists(con, key.clone())? {
             for member in smembers::<String>(con, key.clone())? {
-                if get::<String>(con, member.clone()).is_err() {
+                if get::<String, String>(con, member.clone()).is_err() {
                     info!("lazy evict key: {}", member);
                 }
                 Self::clean_up_expired(con, key.clone(), member.clone())?;
@@ -644,8 +644,8 @@ pub trait MasterBehavior {
         time_internal: u64,
         timing_batch: usize,
     ) -> Result<()>;
-    fn save_block(con: &mut Connection, block: Vec<u8>) -> Result<Vec<u8>>;
-    fn get_block(con: &mut Connection, hash: Vec<u8>) -> Result<Vec<u8>>;
+    async fn save_block(con: &mut Connection, block: Vec<u8>) -> Result<Vec<u8>>;
+    async fn get_block(hash: Vec<u8>) -> Result<Vec<u8>>;
 }
 
 #[derive(Clone, Copy)]
@@ -732,8 +732,9 @@ impl MasterBehavior for Master {
                             let decoded_package = deserialize::<Package>(package_data.as_slice())?;
                             let maybe: MaybeLocked = BlockContext::current_account(con)?;
                             let account = maybe.unlocked()?;
-                            let new_package =
-                                decoded_package.to_packaged_tx(con, *account.address())?;
+                            let new_package = decoded_package
+                                .to_packaged_tx(con, *account.address())
+                                .await?;
                             let raw_tx = new_package.to(con).await?;
                             let new_hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
                             warn!(
@@ -810,8 +811,9 @@ impl MasterBehavior for Master {
                         let decoded_package = deserialize::<Package>(package_data.as_slice())?;
                         let maybe: MaybeLocked = BlockContext::current_account(con)?;
                         let account = maybe.unlocked()?;
-                        let new_package =
-                            decoded_package.to_packaged_tx(con, *account.address())?;
+                        let new_package = decoded_package
+                            .to_packaged_tx(con, *account.address())
+                            .await?;
                         let raw_tx = new_package.to(con).await?;
                         let new_hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
                         CacheOperator::clean_up_tx(con, tx_hash.clone())?;
@@ -834,8 +836,8 @@ impl MasterBehavior for Master {
     }
 
     async fn sub_enqueue_stream(con: &mut Connection, timing_batch: usize) -> Result<()> {
-        let enqueue_id =
-            get::<String>(con, stream_id_key(ENQUEUE.to_string())).unwrap_or("0".to_string());
+        let enqueue_id = get::<String, String>(con, stream_id_key(ENQUEUE.to_string()))
+            .unwrap_or("0".to_string());
         let opts = StreamReadOptions::default().count(timing_batch);
         let results: StreamReadReply =
             con.xread_options(&[stream_key(ENQUEUE.to_string())], &[enqueue_id], opts)?;
@@ -875,7 +877,8 @@ impl MasterBehavior for Master {
                         let batch_number = BlockContext::get_batch_number(con).await?;
 
                         let packaged_tx_obj = Package::new(batch_number, block.clone())
-                            .to_packaged_tx(con, *account.address())?;
+                            .to_packaged_tx(con, *account.address())
+                            .await?;
                         let raw_tx = packaged_tx_obj.to(con).await?;
                         warn!("raw_tx len: {}", raw_tx.encoded_len());
                         let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
@@ -920,8 +923,8 @@ impl MasterBehavior for Master {
         time_internal: u64,
         timing_batch: usize,
     ) -> Result<()> {
-        let expire_id =
-            get::<String>(con, stream_id_key(EXPIRE.to_string())).unwrap_or("0".to_string());
+        let expire_id = get::<String, String>(con, stream_id_key(EXPIRE.to_string()))
+            .unwrap_or("0".to_string());
         let opts = if time_internal == 0 {
             StreamReadOptions::default().count(timing_batch)
         } else {
@@ -953,17 +956,23 @@ impl MasterBehavior for Master {
         Ok(())
     }
 
-    fn save_block(con: &mut Connection, block: Vec<u8>) -> Result<Vec<u8>> {
+    async fn save_block(con: &mut Connection, block: Vec<u8>) -> Result<Vec<u8>> {
         let maybe: MaybeLocked = BlockContext::current_account(con)?;
         let account = maybe.unlocked()?;
         let hash = account.hash(block.as_slice());
-
-        hset(con, save_block_key(), hash.clone(), block)?;
+        das()
+            .put(
+                save_block_key(hex_without_0x(hash.as_slice())).encode_to_vec(),
+                block,
+            )
+            .await?;
         Ok(hash)
     }
 
-    fn get_block(con: &mut Connection, hash: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(hget::<Vec<u8>, Vec<u8>>(con, save_block_key(), hash)?)
+    async fn get_block(hash: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(das()
+            .get(save_block_key(hex_without_0x(hash.as_slice())).encode_to_vec())
+            .await?)
     }
 }
 
@@ -1097,7 +1106,6 @@ impl ValidatorBehavior for Validator {
             );
             if let Some((hash_str, package_data, batch_number)) = layer1
                 .get_transaction_and_try_decode(
-                    con,
                     Hash::try_from_slice(hash.as_slice())?,
                     account.address().to_vec(),
                 )
