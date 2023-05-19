@@ -260,7 +260,7 @@ async fn main() {
     }
 
     if let Err(e) = DAS.set(Das::new().await) {
-        panic!("layer1 save error: {e}");
+        panic!("das save error: {e}");
     }
     let redis_pool = Pool::new();
     let mut con = redis_pool.get();

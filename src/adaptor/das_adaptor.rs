@@ -113,7 +113,7 @@ impl DasAdaptor for Das {
         Self: Sized,
     {
         let config = config();
-        match DasType::try_from(config.layer1_type).expect("layer1 type invalid!") {
+        match DasType::try_from(config.das_type).expect("das type invalid!") {
             DasType::Redis => Self {
                 redis: Some(Redis::new().await),
                 tikv: None,
@@ -128,7 +128,7 @@ impl DasAdaptor for Das {
     async fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         let config = config();
 
-        match DasType::try_from(config.layer1_type).expect("layer1 type invalid!") {
+        match DasType::try_from(config.das_type).expect("das type invalid!") {
             DasType::Redis => self.redis.as_ref().unwrap().put(key, value).await,
             DasType::Tikv => self.tikv.as_ref().unwrap().put(key, value).await,
         }
@@ -136,7 +136,7 @@ impl DasAdaptor for Das {
 
     async fn get(&self, key: Vec<u8>) -> Result<Vec<u8>> {
         let config = config();
-        match DasType::try_from(config.layer1_type).expect("layer1 type invalid!") {
+        match DasType::try_from(config.das_type).expect("das type invalid!") {
             DasType::Redis => self.redis.as_ref().unwrap().get(key).await,
             DasType::Tikv => self.tikv.as_ref().unwrap().get(key).await,
         }
@@ -144,7 +144,7 @@ impl DasAdaptor for Das {
 
     async fn delete(&self, key: Vec<u8>) -> Result<()> {
         let config = config();
-        match DasType::try_from(config.layer1_type).expect("layer1 type invalid!") {
+        match DasType::try_from(config.das_type).expect("das type invalid!") {
             DasType::Redis => self.redis.as_ref().unwrap().delete(key).await,
             DasType::Tikv => self.tikv.as_ref().unwrap().delete(key).await,
         }
