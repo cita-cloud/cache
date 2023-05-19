@@ -17,7 +17,6 @@ mod cita_cloud;
 mod common;
 mod core;
 mod health_check;
-mod interface;
 mod redis;
 mod rest_api;
 
@@ -48,12 +47,12 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::adaptor::das_adaptor::{Das, DasAdaptor};
+use crate::adaptor::layer1_adaptor::{Layer1, Layer1Adaptor};
 use crate::cita_cloud::wallet::CryptoType;
 use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
 use crate::core::key_manager::{CacheBehavior, CacheOnly, Master, Validator};
 use crate::core::schedule_task::*;
-use crate::interface::{Layer1, Layer1Adaptor};
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
 use rocket::figment::{Figment, Profile};

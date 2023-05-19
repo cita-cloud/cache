@@ -34,10 +34,10 @@ use prost::Message;
 use r2d2_redis::redis::{Commands, ControlFlow, FromRedisValue, ToRedisArgs, Value as RedisValue};
 use serde_json::Value;
 
+use crate::adaptor::layer1_adaptor::Layer1Adaptor;
 use crate::common::cache_log::CtxMap;
 use crate::core::schedule_task::get_con;
 use crate::core::schedule_task::Expire;
-use crate::interface::Layer1Adaptor;
 use cita_cloud_proto::blockchain::Transaction as CloudNormalTransaction;
 use cita_cloud_proto::common::HashResponse;
 use opentelemetry::global;

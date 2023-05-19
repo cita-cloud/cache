@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::adaptor::das_adaptor::Das;
-use crate::interface::Layer1;
+use crate::adaptor::layer1_adaptor::Layer1;
 use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, RpcClients};
 use efficient_sm2::KeyPair;
 use tokio::sync::OnceCell;
