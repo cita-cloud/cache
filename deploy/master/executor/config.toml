@@ -1,3 +1,0 @@
-[executor_evm]
-enable_metrics = false
-executor_port = 55556
