@@ -94,7 +94,7 @@ is_master = true
 log_level = "normal"
 expire_time = 60
 layer1_type = 0
-das_type = 0
+das_type = 1
 enable_evict = false
 [test.log_config]
 agent_endpoint = "127.0.0.1:6831"
