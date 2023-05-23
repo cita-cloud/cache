@@ -38,8 +38,10 @@ jobs:
     runs-on: [ self-hosted, Linux, alibaba-cloud ]
     steps:
       - uses: actions/checkout@v2
-      - name: Configure and build this project
-        uses: threeal/cmake-action@latest
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v1.13
+        with:
+          cmake-version: '3.16.x'
       - uses: arduino/setup-protoc@v1.1.2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -57,8 +59,10 @@ jobs:
     runs-on: [ self-hosted, Linux, alibaba-cloud ]
     steps:
       - uses: actions/checkout@v2
-      - name: Configure and build this project
-        uses: threeal/cmake-action@latest
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v1.13
+        with:
+          cmake-version: '3.16.x'
       - uses: arduino/setup-protoc@v1.1.2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -74,8 +78,10 @@ jobs:
     runs-on: [ self-hosted, Linux, alibaba-cloud ]
     steps:
       - uses: actions/checkout@v2
-      - name: Configure and build this project
-        uses: threeal/cmake-action@latest
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v1.13
+        with:
+          cmake-version: '3.16.x'
       - uses: arduino/setup-protoc@v1.1.2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
