@@ -12,77 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::util::current_time;
-use crate::config;
-use anyhow::Result;
-use log::{set_logger, set_max_level, Level, LevelFilter, Metadata, Record};
-use rocket::yansi::Paint;
-use std::thread;
+use opentelemetry::global;
+use rocket::request::FromRequest;
+use rocket::{request, Request};
+use std::collections::HashMap;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-pub static LOGGER: CacheLogger = CacheLogger;
+use serde::{Deserialize, Serialize};
+#[derive(Serialize, Deserialize)]
+pub struct CtxMap(pub HashMap<String, String>);
 
-pub struct CacheLogger;
+use tracing::instrument;
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for CtxMap {
+    type Error = ();
 
-impl CacheLogger {
-    pub fn set_up() -> Result<()> {
-        let config = config();
-        set_logger(&LOGGER)?;
-        set_max_level(LevelFilter::from(config.log_level));
-        Ok(())
+    #[instrument(skip_all)]
+    async fn from_request(_: &'r Request<'_>) -> request::Outcome<Self, ()> {
+        let mut map = HashMap::new();
+        global::get_text_map_propagator(|propagator| {
+            propagator.inject_context(&tracing::Span::current().context(), &mut map)
+        });
+        request::Outcome::Success(CtxMap(map))
     }
-}
-
-impl log::Log for CacheLogger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        match log::max_level().to_level() {
-            Some(max) => metadata.level() <= max,
-            None => false,
-        }
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            let level = record.level();
-            match level {
-                Level::Error => println!(
-                    "[{}] [{}] [{:?}] {}",
-                    Paint::red(record.level()).wrap(),
-                    current_time(),
-                    Paint::cyan(thread::current().id()),
-                    Paint::red(record.args()).wrap()
-                ),
-                Level::Warn => {
-                    println!(
-                        "[{}] [{}] [{:?}] {}",
-                        Paint::yellow(record.level()).wrap(),
-                        current_time(),
-                        Paint::cyan(thread::current().id()),
-                        Paint::yellow(record.args()).wrap()
-                    )
-                }
-                Level::Info => println!(
-                    "[{}] [{}] [{:?}] {}",
-                    Paint::green(record.level()).wrap(),
-                    current_time(),
-                    Paint::cyan(thread::current().id()),
-                    Paint::green(record.args()).wrap()
-                ),
-                Level::Debug => println!(
-                    "[{}] [{}] [{:?}] {}",
-                    Paint::green(record.level()).wrap(),
-                    current_time(),
-                    Paint::cyan(thread::current().id()),
-                    Paint::green(record.args()).wrap()
-                ),
-                Level::Trace => println!(
-                    "[{}] [{}] [{:?}] {}",
-                    Paint::black(record.level()).wrap(),
-                    current_time(),
-                    Paint::cyan(thread::current().id()),
-                    Paint::black(record.args()).wrap()
-                ),
-            }
-        }
-    }
-    fn flush(&self) {}
 }

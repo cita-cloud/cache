@@ -26,7 +26,7 @@ crossbeam = "0.8"
 lazy_static = "1.4"
 tokio = { version = "1.20", features = ["full"] }
 moka = { version = "0.9", features = ["future"] }
-
+snap = "1"
 # crypto SM
 libsm = "0.5.0"
 efficient-sm2 = "0.1"
@@ -38,8 +38,11 @@ secp256k1 = { version = "0.24", features = ["rand-std", "recovery"] }
 tentacle-multiaddr = "0.3"
 tempfile = "3.3"
 toml = "0.5"
-cloud-util = { package = "cloud-util", git = "https://github.com/cita-cloud/cloud-common-rs.git" }
-cita_cloud_proto = { package = "cita_cloud_proto", git = "https://github.com/cita-cloud/cloud-common-rs.git" }
+tracing = "0.1"
+tracing-opentelemetry = "0.18"
+opentelemetry = { version = "0.18", features = ["rt-tokio"] }
+cloud-util = { package = "cloud-util", git = "https://github.com/cita-cloud/cloud-common-rs" }
+cita_cloud_proto = { package = "cita_cloud_proto", git = "https://github.com/cita-cloud/cloud-common-rs" }
 
 redis = "0.21.5"
 r2d2 = "*"
@@ -47,6 +50,8 @@ r2d2_redis = "*"
 thiserror =  "1"
 msgpack-schema = "0.4.2"
 tokio-test = "0.4.2"
+
+tikv-client = "0.1.0"
 
 [build-dependencies]
 tonic-build = "0.8"

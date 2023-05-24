@@ -10,12 +10,17 @@ redis_addr = "redis://default:rivtower@127.0.0.1:6379"
 redis_max_workers = 100
 timing_internal_sec = 1
 timing_batch = 50
-log_level = "critical"
+log_level = "normal"
 expire_time = 60
 rough_internal = 10
 crypto_type = "SM"
 is_master = true
 
+[default.log_config]
+agent_endpoint = "jaeger.tracing.svc:6831"
+filter = "info"
+max_level = "info"
+service_name = "cache"
 ## set only when compiled in debug mode, i.e, `cargo build`
 [debug]
 port = 8000
@@ -23,13 +28,22 @@ port = 8000
 limits = { json = "10MiB" }
 controller_addr = "http://127.0.0.1:50004"
 executor_addr = "http://127.0.0.1:50002"
+local_executor_addr = "http://127.0.0.1:55557"
 crypto_addr = "http://127.0.0.1:50005"
 redis_addr = "redis://default:rivtower@127.0.0.1:6379"
-redis_max_workers = 100
+redis_max_workers = 512
 timing_internal_sec = 1
-timing_batch = 100
-log_level = "normal"
+timing_batch = 10000
+stream_block_ms = 50
+stream_max_count = 10000
+packaged_tx_vub = 50
+crypto_type = "SM"
 is_master = true
+log_level = "normal"
+expire_time = 60
+layer1_type = 0
+enable_evict = true
+
 
 [local_master]
 port = 8000
@@ -63,12 +77,12 @@ is_master = false
 ## set only when the `nyc` profile is selected
 [test]
 port = 8888
-limits = { json = "10MiB" }
 controller_addr = "http://127.0.0.1:50004"
 executor_addr = "http://127.0.0.1:50002"
 local_executor_addr = "http://127.0.0.1:55557"
 crypto_addr = "http://127.0.0.1:50005"
 redis_addr = "redis://default:rivtower@127.0.0.1:6379"
+tikv_addr = ["127.0.0.1:12379"]
 redis_max_workers = 512
 timing_internal_sec = 1
 timing_batch = 10000
@@ -78,7 +92,16 @@ packaged_tx_vub = 50
 crypto_type = "SM"
 is_master = true
 log_level = "normal"
-
+expire_time = 60
+layer1_type = 0
+das_type = 1
+enable_evict = false
+[test.log_config]
+agent_endpoint = "127.0.0.1:6831"
+filter = "info"
+max_level = "info"
+#rolling_file_path = "./logs"
+service_name = "cache"
 
 ## set only when compiled in release mode, i.e, `cargo build --release`
 ## don't use this secret_key! generate your own and keep it private!

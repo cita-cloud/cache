@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod adaptor;
 mod cita_cloud;
 mod common;
 mod core;
@@ -23,7 +24,6 @@ use crate::cita_cloud::controller::ControllerClient;
 use crate::cita_cloud::crypto::CryptoClient;
 use crate::cita_cloud::evm::EvmClient;
 use crate::cita_cloud::executor::ExecutorClient;
-use crate::common::cache_log::CacheLogger;
 use crate::common::constant::*;
 use crate::common::crypto::{ArrayLike, Hash};
 use crate::common::display::Display;
@@ -32,6 +32,7 @@ use crate::redis::{
     delete, exists, get, hdel, hget, hset, incr_one, keys, psubscribe, smembers, srem, zadd,
     zrange_withscores, zrem, Pool,
 };
+use cloud_util::tracer::LogConfig;
 use rest_api::common::{api_not_found, uri_not_found, ApiDoc};
 use rest_api::get::{
     abi, account_nonce, balance, block, block_hash, block_number, code, receipt, receipt_local,
@@ -45,15 +46,19 @@ use serde::Deserialize;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::adaptor::das_adaptor::{Das, DasAdaptor};
+use crate::adaptor::layer1_adaptor::{Layer1, Layer1Adaptor};
 use crate::cita_cloud::wallet::CryptoType;
 use crate::common::context::{BlockContext, LocalBehaviour};
 use crate::common::util::init_local_utc_offset;
-use crate::core::key_manager::{CacheBehavior, CacheManager};
+use crate::core::key_manager::{CacheBehavior, CacheOnly, Master, Validator};
 use crate::core::schedule_task::*;
 use rocket::config::Config;
 use rocket::figment::providers::{Env, Format, Toml};
 use rocket::figment::{Figment, Profile};
 use serde_json::{json, Value};
+use tracing::{error, info, warn};
+
 #[macro_use]
 extern crate rocket;
 
@@ -96,6 +101,7 @@ pub struct CacheConfig {
     local_executor_addr: Option<String>,
     crypto_addr: Option<String>,
     redis_addr: Option<String>,
+    tikv_addr: Option<Vec<String>>,
     timing_internal_sec: Option<u64>,
     timing_batch: Option<isize>,
     redis_max_workers: Option<u64>,
@@ -103,6 +109,8 @@ pub struct CacheConfig {
     stream_max_count: Option<u64>,
     packaged_tx_vub: Option<u64>,
     log_level: LogLevel,
+    layer1_type: u64,
+    das_type: u64,
     //read cache timeout
     expire_time: Option<usize>,
     //collect expired keys in rough_internal seconds
@@ -110,11 +118,16 @@ pub struct CacheConfig {
     workers: u64,
     crypto_type: CryptoType,
     is_master: bool,
+    enable_evict: bool,
+    log_config: LogConfig,
 }
 
 impl CacheConfig {
     pub fn with_default(&mut self) -> Self {
         let default = Self::default();
+        if self.expire_time.is_none() {
+            self.expire_time = default.expire_time;
+        }
         if self.controller_addr.is_none() {
             self.controller_addr = default.controller_addr;
         }
@@ -129,6 +142,9 @@ impl CacheConfig {
         }
         if self.redis_addr.is_none() {
             self.redis_addr = default.redis_addr;
+        }
+        if self.das_type == 1 && self.tikv_addr.is_none() {
+            self.tikv_addr = default.tikv_addr;
         }
         if self.timing_internal_sec.is_none() {
             self.timing_internal_sec = default.timing_internal_sec;
@@ -163,6 +179,7 @@ impl Default for CacheConfig {
             local_executor_addr: Some("http://127.0.0.1:55556".to_string()),
             crypto_addr: Some("http://127.0.0.1:50005".to_string()),
             redis_addr: Some("redis://default:rivtower@127.0.0.1:6379".to_string()),
+            tikv_addr: Some(vec!["127.0.0.1:12379".to_string()]),
             timing_internal_sec: Some(1),
             timing_batch: Some(100),
             stream_block_ms: Some(100),
@@ -172,9 +189,13 @@ impl Default for CacheConfig {
             log_level: LogLevel::Normal,
             expire_time: Some(60),
             rough_internal: Some(10),
+            layer1_type: 0,
+            das_type: 0,
             workers: 1,
             crypto_type: CryptoType::Sm,
             is_master: true,
+            enable_evict: false,
+            log_config: LogConfig::default(),
         }
     }
 }
@@ -186,6 +207,7 @@ impl Display for CacheConfig {
             "local_executor_addr": self.local_executor_addr,
             "crypto_addr": self.crypto_addr,
             "redis_addr": self.redis_addr,
+            "tikv_addr": self.tikv_addr,
             "timing_internal_sec": self.timing_internal_sec,
             "timing_batch": self.timing_batch,
             "stream_block_ms": self.stream_block_ms,
@@ -198,10 +220,14 @@ impl Display for CacheConfig {
             "workers": self.workers,
             "crypto_type": self.crypto_type,
             "is_master": self.is_master,
+            "enable_evict": self.enable_evict,
+            "layer1_type": self.layer1_type,
+            "das_type": self.das_type,
+            "expire_time": self.expire_time,
+            "log_config": self.log_config,
         })
     }
 }
-
 #[rocket::main]
 async fn main() {
     init_local_utc_offset();
@@ -219,10 +245,9 @@ async fn main() {
     if let Err(e) = CACHE_CONFIG.set(config.clone()) {
         panic!("store cache config error: {e:?}");
     }
-    if let Err(e) = CacheLogger::set_up() {
-        panic!("set cache logger failed: {e}");
+    if let Err(e) = cloud_util::tracer::init_tracer("cache".to_string(), &config.log_config) {
+        panic!("init tracer error: {e:?}");
     }
-
     info!("cache config: {}", config.display());
     let rpc_clients: RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> =
         RpcClients::new();
@@ -230,18 +255,23 @@ async fn main() {
     if let Err(e) = RPC_CLIENTS.set(rpc_clients.clone()) {
         panic!("store rpc clients error: {e}");
     }
+    if let Err(e) = LAYER1.set(Layer1::new()) {
+        panic!("layer1 save error: {e}");
+    }
 
+    if let Err(e) = DAS.set(Das::new().await) {
+        panic!("das save error: {e}");
+    }
     let redis_pool = Pool::new();
     let mut con = redis_pool.get();
     match BlockContext::set_up(&mut con).await {
         Ok(_) => info!("block context set up success!"),
         Err(e) => warn!("block context set up fail: {}", e),
     }
-    match CacheManager::set_up(&mut con) {
-        Ok(_) => info!("cache manager set up success!"),
-        Err(e) => warn!("cache manager set up fail: {}", e),
+    match CacheOnly::set_up(&mut con) {
+        Ok(_) => info!("cache set up success!"),
+        Err(e) => info!("cache set up failed, e: {}", e),
     }
-
     let rt = ScheduleTaskManager::setup();
     let _ = rt.enter();
     let rocket: Rocket<Build> = rocket(figment).attach(AdHoc::config::<CacheConfig>());

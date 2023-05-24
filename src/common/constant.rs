@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::adaptor::das_adaptor::Das;
+use crate::adaptor::layer1_adaptor::Layer1;
 use crate::{CacheConfig, ControllerClient, CryptoClient, EvmClient, ExecutorClient, RpcClients};
 use efficient_sm2::KeyPair;
 use tokio::sync::OnceCell;
@@ -34,6 +36,9 @@ pub const CITA_CLOUD_BLOCK_NUMBER: &str = "cita_cloud_block_number";
 pub const CURRENT_BATCH_NUMBER: &str = "current_batch_number";
 pub const VALIDATOR_BATCH_NUMBER: &str = "validator_batch_number";
 pub const CURRENT_FAKE_BLOCK_HASH: &str = "current_fake_block_hash";
+pub const BATCH_NUMBER_TO_STATE_ROOT: &str = "batch_number_to_state_root";
+pub const HASH_TO_TRACE_CTX: &str = "hash_to_trace_ctx";
+pub const BLOCK_TO_TX: &str = "block_hash_to_tx_hash";
 pub const PACKAGED_TX: &str = "packaged_tx";
 pub const STREAM_ID: &str = "stream_id";
 pub const ENQUEUE: &str = "enqueue";
@@ -47,6 +52,7 @@ pub const UNCOMMITTED_TX: &str = "uncommitted_tx_hash";
 pub const PACK_UNCOMMITTED_TX: &str = "pack_uncommitted_tx_hash";
 pub const COMMITTED_TX: &str = "committed_tx_hash";
 pub const HASH_TO_TX: &str = "hash_to_tx";
+pub const SAVE_BLOCK: &str = "save_block";
 pub const HASH_TO_BLOCK_NUMBER: &str = "hash_to_block_number";
 pub const TIME_TO_CLEAN_UP: &str = "time_to_clean_up";
 pub const LAZY_EVICT_TO_TIME: &str = "lazy_evict_to_time";
@@ -60,14 +66,23 @@ pub static CACHE_CONFIG: OnceCell<CacheConfig> = OnceCell::const_new();
 pub static RPC_CLIENTS: OnceCell<
     RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient>,
 > = OnceCell::const_new();
+pub static LAYER1: OnceCell<Layer1> = OnceCell::const_new();
 pub static KEY_PAIR: OnceCell<KeyPair> = OnceCell::const_new();
+pub static DAS: OnceCell<Das> = OnceCell::const_new();
 
 pub fn config() -> CacheConfig {
     CACHE_CONFIG.get().unwrap().clone()
 }
 
-fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> {
+pub fn rpc_clients() -> RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> {
     RPC_CLIENTS.get().unwrap().clone()
+}
+
+pub fn layer1() -> Layer1 {
+    LAYER1.get().unwrap().clone()
+}
+pub fn das() -> Das {
+    DAS.get().unwrap().clone()
 }
 
 pub fn rough_internal() -> u64 {
@@ -78,23 +93,6 @@ pub fn block_count() -> u64 {
     config().packaged_tx_vub.unwrap()
 }
 
-// #[warn(dead_code)]
-// pub fn crypto() -> CryptoClient {
-//     rpc_clients().crypto
-// }
-
-pub fn controller() -> ControllerClient {
-    rpc_clients().controller
-}
-
 pub fn local_executor() -> ExecutorClient {
     rpc_clients().local_executor
 }
-
-pub fn evm() -> EvmClient {
-    rpc_clients().evm
-}
-
-// pub fn keypair() -> KeyPair {
-//     KEY_PAIR.get().unwrap().clone()
-// }

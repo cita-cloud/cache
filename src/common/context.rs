@@ -12,19 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::cita_cloud::controller::{ControllerBehaviour, SignerBehaviour};
+use crate::cita_cloud::controller::SignerBehaviour;
 use crate::cita_cloud::executor::ExecutorBehaviour;
 use crate::cita_cloud::wallet::MaybeLocked;
-use crate::common::constant::{controller, local_executor, ADMIN_ACCOUNT};
+use crate::common::constant::{local_executor, ADMIN_ACCOUNT};
 use crate::common::util::{hex, parse_data, timestamp};
 use crate::core::key_manager::{
     admin_account_key, cita_cloud_block_number_key, key_without_param, rollup_write_enable,
-    system_config_key,
+    system_config_key, CacheOperator,
 };
+use crate::core::key_manager::{batch_to_state_root, ValBehavior};
 use crate::core::key_manager::{current_batch_number, current_fake_block_hash};
 use crate::redis::{set, Connection};
-use crate::{config, exists, get, incr_one, CacheBehavior, CacheManager, CryptoType, KEY_PAIR};
+use crate::{config, exists, get, hset, incr_one, layer1, CryptoType, Layer1Adaptor, KEY_PAIR};
 use anyhow::{anyhow, Result};
+use cita_cloud_proto::common::HashResponse;
 use cita_cloud_proto::{
     blockchain::{Block, BlockHeader, RawTransaction, RawTransactions},
     controller::SystemConfig,
@@ -32,6 +34,7 @@ use cita_cloud_proto::{
 use cloud_util::unix_now;
 use prost::Message;
 use std::cmp;
+use tracing::info;
 
 #[tonic::async_trait]
 pub trait LocalBehaviour {
@@ -68,19 +71,20 @@ impl BlockContext {
         set(con, account_key, account_str.to_string())?;
         Ok(())
     }
+
     pub fn current_cita_height(con: &mut Connection) -> Result<u64> {
-        let current = get::<u64>(con, cita_cloud_block_number_key())?;
+        let current = get::<String, u64>(con, cita_cloud_block_number_key())?;
         Ok(current)
     }
 
     pub fn system_config(con: &mut Connection) -> Result<SystemConfig> {
-        let system_config = get::<Vec<u8>>(con, system_config_key())?;
+        let system_config = get::<String, Vec<u8>>(con, system_config_key())?;
         let config: SystemConfig = Message::decode(system_config.as_slice())?;
         Ok(config)
     }
 
     pub fn current_account(con: &mut Connection) -> Result<MaybeLocked> {
-        let account_str = get::<String>(con, admin_account_key())?;
+        let account_str = get::<String, String>(con, admin_account_key())?;
         let maybe: MaybeLocked = toml::from_str::<MaybeLocked>(account_str.as_str())?;
         Ok(maybe)
     }
@@ -109,9 +113,23 @@ impl BlockContext {
         Ok(set(con, current_fake_block_hash(), hash)?)
     }
 
-    pub fn step_next(con: &mut Connection, block_hash: Vec<u8>) -> Result<()> {
-        Self::increase_batch_number(con)?;
+    pub fn save_state_root(
+        con: &mut Connection,
+        batch_number: u64,
+        state_root: Vec<u8>,
+    ) -> Result<u64> {
+        Ok(hset(
+            con,
+            batch_to_state_root(),
+            format!("{}", batch_number),
+            state_root,
+        )?)
+    }
+
+    pub fn step_next(con: &mut Connection, block_hash: Vec<u8>, state_root: Vec<u8>) -> Result<()> {
+        let batch_number = Self::increase_batch_number(con)?;
         Self::set_fake_block_hash(con, block_hash)?;
+        Self::save_state_root(con, batch_number, state_root)?;
         Ok(())
     }
 
@@ -129,9 +147,10 @@ impl BlockContext {
         }
     }
 
+    // #[instrument(skip_all)]
     pub fn is_master(con: &mut Connection) -> Result<bool> {
         let key = rollup_write_enable();
-        Ok(exists(con, key.clone())? && get::<u64>(con, key)? == 1)
+        Ok(exists(con, key.clone())? && get::<String, u64>(con, key)? == 1)
     }
 
     fn is_restart(con: &mut Connection) -> Result<bool> {
@@ -158,28 +177,25 @@ impl LocalBehaviour for BlockContext {
         } else {
             0
         };
-        CacheManager::set_ex(
+        let layer1 = layer1();
+        CacheOperator::save_val(
             con,
             cita_cloud_block_number_key(),
-            cmp::max(controller().get_block_number(false).await?, num),
+            cmp::max(layer1.get_block_number(false).await?, num),
             expire_time * 2,
         )?;
-        let sys_config = controller().get_system_config().await?;
-        let mut sys_config_bytes = Vec::with_capacity(sys_config.encoded_len());
-        sys_config
-            .encode(&mut sys_config_bytes)
-            .expect("encode system config failed");
-        CacheManager::set_ex(con, system_config_key(), sys_config_bytes, expire_time * 2)?;
+        let sys_config_bytes = layer1.get_system_config().await?;
+        CacheOperator::save_val(con, system_config_key(), sys_config_bytes, expire_time * 2)?;
         Ok(())
     }
 
     async fn get_batch_number(con: &mut Connection) -> Result<u64> {
         let key = current_batch_number();
         if exists(con, key.clone())? {
-            Ok(get::<u64>(con, key.clone())?)
+            Ok(get::<String, u64>(con, key.clone())?)
         } else {
             Self::commit_genesis_block(con).await?;
-            Ok(get::<u64>(con, key.clone())?)
+            Ok(get::<String, u64>(con, key.clone())?)
         }
     }
 
@@ -220,7 +236,11 @@ impl LocalBehaviour for BlockContext {
         let account = maybe.unlocked()?;
         let block = Self::genesis_block();
         let res = local_executor().exec(block.clone()).await?;
-        if let Some(status) = res.status {
+        if let HashResponse {
+            status: Some(status),
+            hash: Some(state_root),
+        } = res
+        {
             if status.code == 0 {
                 let genesis_header = block.header.expect("get genesis header failed!");
                 let mut block_header_bytes = Vec::with_capacity(genesis_header.encoded_len());
@@ -229,7 +249,7 @@ impl LocalBehaviour for BlockContext {
                     .expect("encode block header failed");
                 let block_hash = account.hash(block_header_bytes.as_slice());
                 info!("current block hash: {}", hex(block_hash.as_slice()));
-                Self::step_next(con, block_hash)?;
+                Self::step_next(con, block_hash, state_root.hash)?;
                 Ok(())
             } else {
                 Err(anyhow!(

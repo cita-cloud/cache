@@ -46,6 +46,7 @@ pub fn display_time(timestamp: u64) -> String {
         .unwrap()
 }
 
+#[allow(dead_code)]
 pub fn current_time() -> String {
     display_time(timestamp())
 }
