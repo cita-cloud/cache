@@ -6,6 +6,9 @@ RUN /bin/sh -c set -eux;\
     apt-get update;\
     apt-get install -y --no-install-recommends wget;\
     apt-get install -y protobuf-compiler;\
+    apt-get install -y cmake;\
+    apt-get install -y build-essential;\
+    apt-get install -y manpages-dev;\
     rm -rf /var/lib/apt/lists/*;\
     GRPC_HEALTH_PROBE_VERSION=v0.4.10;\
     wget -qO /bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64;\
