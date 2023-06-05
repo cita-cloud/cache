@@ -22,12 +22,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct CtxMap(pub HashMap<String, String>);
 
-use tracing::instrument;
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for CtxMap {
     type Error = ();
 
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     async fn from_request(_: &'r Request<'_>) -> request::Outcome<Self, ()> {
         let mut map = HashMap::new();
         global::get_text_map_propagator(|propagator| {

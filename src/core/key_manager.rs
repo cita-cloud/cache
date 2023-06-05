@@ -43,7 +43,6 @@ use cita_cloud_proto::common::HashResponse;
 use opentelemetry::global;
 use r2d2_redis::redis::streams::{StreamReadOptions, StreamReadReply};
 use std::future::Future;
-use tracing::instrument;
 use tracing::{info, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -416,13 +415,13 @@ impl ExpiredBehavior for CacheOperator {
     }
 }
 
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 fn on_local_execute(ctx: CtxMap) {
     let parent_cx = global::get_text_map_propagator(|propagator| propagator.extract(&ctx.0));
     tracing::Span::current().set_parent(parent_cx);
 }
 
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 fn on_save_to_chain(ctx: CtxMap) {
     let parent_cx = global::get_text_map_propagator(|propagator| propagator.extract(&ctx.0));
     tracing::Span::current().set_parent(parent_cx);
@@ -459,7 +458,7 @@ pub trait PackBehavior {
 
 #[tonic::async_trait]
 pub trait CacheBehavior {
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     fn save_trace_ctx(con: &mut Connection, hash_str: String, ctx: CtxMap) -> Result<()> {
         let ctx_bytes = serde_json::to_vec(&ctx)?;
         hset(con, hash_to_trace_ctx(), hash_str, ctx_bytes)?;

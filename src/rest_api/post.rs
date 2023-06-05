@@ -39,7 +39,6 @@ use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use utoipa::ToSchema;
 
@@ -353,7 +352,7 @@ pub async fn create(
     }
 }
 
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 async fn create_tx(con: &mut Connection, ctx: CtxMap, send_tx: SendTx) -> Result<Hash> {
     let maybe: MaybeLocked = BlockContext::current_account(con)?;
     let account = maybe.unlocked()?;
@@ -374,7 +373,7 @@ post,
 path = "/api/sendTx",
 request_body = SendTx,
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn send_tx(
     ctx: CtxMap,
     mut result: Json<SendTx>,

@@ -31,7 +31,6 @@ use anyhow::anyhow;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde_json::{json, Value};
-use tracing::instrument;
 
 ///Get version
 #[get("/get-version/<flag>")]
@@ -387,7 +386,7 @@ params(
 ("block_number", description = "The block number"),
 )
 )]
-#[instrument(skip_all)]
+// #[instrument(skip_all)]
 pub async fn block_hash(
     block_number: usize,
     pool: &State<Pool>,
