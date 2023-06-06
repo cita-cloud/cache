@@ -245,9 +245,9 @@ async fn main() {
     if let Err(e) = CACHE_CONFIG.set(config.clone()) {
         panic!("store cache config error: {e:?}");
     }
-    if let Err(e) = cloud_util::tracer::init_tracer("cache".to_string(), &config.log_config) {
-        panic!("init tracer error: {e:?}");
-    }
+    // if let Err(e) = cloud_util::tracer::init_tracer("cache".to_string(), &config.log_config) {
+    //     panic!("init tracer error: {e:?}");
+    // }
     info!("cache config: {}", config.display());
     let rpc_clients: RpcClients<ControllerClient, ExecutorClient, EvmClient, CryptoClient> =
         RpcClients::new();
