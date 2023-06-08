@@ -89,6 +89,7 @@ fn packaged_tx() -> String {
     format!("{KEY_PREFIX}:{SET_TYPE}:{PACKAGED_TX}:")
 }
 
+#[allow(dead_code)]
 fn block_to_tx(block_hash: String) -> String {
     format!("{KEY_PREFIX}:{SET_TYPE}:{BLOCK_TO_TX}:{block_hash}")
 }
@@ -416,12 +417,14 @@ impl ExpiredBehavior for CacheOperator {
 }
 
 // #[instrument(skip_all)]
+#[allow(dead_code)]
 fn on_local_execute(ctx: CtxMap) {
     let parent_cx = global::get_text_map_propagator(|propagator| propagator.extract(&ctx.0));
     tracing::Span::current().set_parent(parent_cx);
 }
 
 // #[instrument(skip_all)]
+#[allow(dead_code)]
 fn on_save_to_chain(ctx: CtxMap) {
     let parent_cx = global::get_text_map_propagator(|propagator| propagator.extract(&ctx.0));
     tracing::Span::current().set_parent(parent_cx);
@@ -789,12 +792,12 @@ impl MasterBehavior for Master {
                     }
                 };
                 Self::save_tx_content(con, tx_hash.clone(), tx, expire_time)?;
-                if Self::is_packaged_tx(con, tx_hash.clone())? {
-                    for tx_hash in CacheOnly::get_block_txs(con, tx_hash.clone())? {
-                        let ctx = CacheOnly::get_trace_ctx(con, tx_hash)?;
-                        on_save_to_chain(ctx);
-                    }
-                }
+                // if Self::is_packaged_tx(con, tx_hash.clone())? {
+                //     for tx_hash in CacheOnly::get_block_txs(con, tx_hash.clone())? {
+                //         let ctx = CacheOnly::get_trace_ctx(con, tx_hash)?;
+                //         on_save_to_chain(ctx);
+                //     }
+                // }
                 CacheOperator::try_clean_contract_data(con, tx_hash.clone())?;
                 CacheOperator::clean_up_tx(con, tx_hash.clone())?;
 
@@ -882,20 +885,20 @@ impl MasterBehavior for Master {
                         warn!("raw_tx len: {}", raw_tx.encoded_len());
                         let hash = Self::enqueue_raw_tx(con, account, raw_tx).await?;
                         let hash_str = hex_without_0x(hash.as_slice());
-                        for raw_tx in tx_list {
-                            if let Some(Tx::NormalTx(normal_tx)) = raw_tx.clone().tx {
-                                let tx_hash_str = hex_without_0x(&normal_tx.transaction_hash);
-                                CacheOnly::save_block_tx(
-                                    con,
-                                    hash_str.clone(),
-                                    tx_hash_str.clone(),
-                                )?;
-                                let ctx = CacheOnly::get_trace_ctx(con, tx_hash_str)?;
-                                on_local_execute(ctx);
-                            }
+                        // for raw_tx in tx_list {
+                        // if let Some(Tx::NormalTx(normal_tx)) = raw_tx.clone().tx {
+                        // let tx_hash_str = hex_without_0x(&normal_tx.transaction_hash);
+                        // CacheOnly::save_block_tx(
+                        //     con,
+                        //     hash_str.clone(),
+                        //     tx_hash_str.clone(),
+                        // )?;
+                        // let ctx = CacheOnly::get_trace_ctx(con, tx_hash_str)?;
+                        // on_local_execute(ctx);
+                        // }
 
-                            CacheOperator::try_clean_contract(con, raw_tx)?;
-                        }
+                        // CacheOperator::try_clean_contract(con, raw_tx)?;
+                        // }
                         Self::tag_tx(con, hash_str.clone())?;
 
                         let header = block.header.expect("get block header failed");

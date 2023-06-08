@@ -38,6 +38,7 @@ pub const VALIDATOR_BATCH_NUMBER: &str = "validator_batch_number";
 pub const CURRENT_FAKE_BLOCK_HASH: &str = "current_fake_block_hash";
 pub const BATCH_NUMBER_TO_STATE_ROOT: &str = "batch_number_to_state_root";
 pub const HASH_TO_TRACE_CTX: &str = "hash_to_trace_ctx";
+#[allow(dead_code)]
 pub const BLOCK_TO_TX: &str = "block_hash_to_tx_hash";
 pub const PACKAGED_TX: &str = "packaged_tx";
 pub const STREAM_ID: &str = "stream_id";
