@@ -82,11 +82,35 @@ impl DasAdaptor for Tikv {
     }
 }
 
+#[derive(Clone)]
+pub struct Noop;
+#[tonic::async_trait]
+impl DasAdaptor for Noop {
+    async fn new() -> Self
+    where
+        Self: Sized,
+    {
+        Self
+    }
+
+    async fn put(&self, _key: Vec<u8>, _value: Vec<u8>) -> Result<()> {
+        Ok(())
+    }
+
+    async fn get(&self, _key: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+
+    async fn delete(&self, _key: Vec<u8>) -> Result<()> {
+        Ok(())
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u64)]
 pub enum DasType {
     Redis = 0,
     Tikv,
+    Noop,
 }
 
 impl TryFrom<u64> for DasType {
@@ -96,6 +120,7 @@ impl TryFrom<u64> for DasType {
         match v {
             x if x == DasType::Redis as u64 => Ok(DasType::Redis),
             x if x == DasType::Tikv as u64 => Ok(DasType::Tikv),
+            x if x == DasType::Noop as u64 => Ok(DasType::Noop),
             _ => Err(()),
         }
     }
@@ -104,6 +129,7 @@ impl TryFrom<u64> for DasType {
 pub struct Das {
     tikv: Option<Tikv>,
     redis: Option<Redis>,
+    noop: Option<Noop>,
 }
 
 #[tonic::async_trait]
@@ -117,10 +143,17 @@ impl DasAdaptor for Das {
             DasType::Redis => Self {
                 redis: Some(Redis::new().await),
                 tikv: None,
+                noop: None,
             },
             DasType::Tikv => Self {
                 redis: None,
                 tikv: Some(Tikv::new().await),
+                noop: None,
+            },
+            DasType::Noop => Self {
+                redis: None,
+                tikv: Some(Tikv::new().await),
+                noop: Some(Noop::new().await),
             },
         }
     }
@@ -131,6 +164,7 @@ impl DasAdaptor for Das {
         match DasType::try_from(config.das_type).expect("das type invalid!") {
             DasType::Redis => self.redis.as_ref().unwrap().put(key, value).await,
             DasType::Tikv => self.tikv.as_ref().unwrap().put(key, value).await,
+            DasType::Noop => self.noop.as_ref().unwrap().put(key, value).await,
         }
     }
 
@@ -139,6 +173,7 @@ impl DasAdaptor for Das {
         match DasType::try_from(config.das_type).expect("das type invalid!") {
             DasType::Redis => self.redis.as_ref().unwrap().get(key).await,
             DasType::Tikv => self.tikv.as_ref().unwrap().get(key).await,
+            DasType::Noop => self.noop.as_ref().unwrap().get(key).await,
         }
     }
 
@@ -147,6 +182,7 @@ impl DasAdaptor for Das {
         match DasType::try_from(config.das_type).expect("das type invalid!") {
             DasType::Redis => self.redis.as_ref().unwrap().delete(key).await,
             DasType::Tikv => self.tikv.as_ref().unwrap().delete(key).await,
+            DasType::Noop => self.noop.as_ref().unwrap().delete(key).await,
         }
     }
 }
